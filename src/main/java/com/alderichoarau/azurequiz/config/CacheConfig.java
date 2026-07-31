@@ -6,11 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.CollectionType;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
+import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
@@ -43,7 +46,7 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 public class CacheConfig {
 
     @Bean
-    public RedisCacheManagerBuilderCustomizer jsonCacheCustomizer() {
+        public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
 
         RedisCacheConfiguration defaults =
@@ -53,11 +56,15 @@ public class CacheConfig {
                                 RedisSerializationContext.SerializationPair.fromSerializer(
                                         new GenericJackson2JsonRedisSerializer(mapper)));
 
-        return builder ->
-                builder.cacheDefaults(defaults)
-                        .withCacheConfiguration(
-                                "certifications", typedListConfig(mapper, CertificationSummaryDto.class))
-                        .withCacheConfiguration("modules", typedListConfig(mapper, ModuleSummaryDto.class));
+        HashMap<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
+        cacheConfigurations.put(
+                "certifications", typedListConfig(mapper, CertificationSummaryDto.class));
+        cacheConfigurations.put("modules", typedListConfig(mapper, ModuleSummaryDto.class));
+
+        return RedisCacheManager.builder(connectionFactory)
+                .cacheDefaults(defaults)
+                .withInitialCacheConfigurations(cacheConfigurations)
+                .build();
     }
 
     private RedisCacheConfiguration typedListConfig(ObjectMapper mapper, Class<?> elementType) {
