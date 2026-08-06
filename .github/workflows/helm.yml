@@ -56,24 +56,43 @@ jobs:
       - name: Resolve ACR login server (query)
         id: acr
         env:
-          ACR_NAME: ${{ vars.ACR_NAME }}
-          ACR_RESOURCE_GROUP: ${{ vars.ACR_RESOURCE_GROUP }}
+          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
+          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
         run: |
-          ACR_LOGIN_SERVER=$(az acr show \
-            --name "$ACR_NAME" \
-            --resource-group "$ACR_RESOURCE_GROUP" \
-            --query loginServer -o tsv)
-          if [ -z "$ACR_LOGIN_SERVER" ]; then
-            echo "ACR login server not found" >&2
+          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
+            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
             exit 1
           fi
+
+          ACR_COUNT=$(az acr list \
+            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
+
+          if [ "$ACR_COUNT" -eq 0 ]; then
+            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            exit 1
+          fi
+
+          if [ "$ACR_COUNT" -gt 1 ]; then
+            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            echo "Refine tags so they match exactly one ACR." >&2
+            exit 1
+          fi
+
+          ACR_NAME=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+          ACR_LOGIN_SERVER=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
+
+          if [ -z "$ACR_NAME" ] || [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "Unable to resolve ACR name or login server" >&2
+            exit 1
+          fi
+          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
           echo "login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
           echo "image_repository=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
 
       - name: ACR docker login
-        env:
-          ACR_NAME: ${{ vars.ACR_NAME }}
-        run: az acr login --name "$ACR_NAME"
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
 
       - name: Compute image tag
         id: meta
@@ -102,14 +121,49 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get AKS credentials
+      - name: Resolve AKS cluster (query)
+        id: aks
         env:
-          AKS_NAME: ${{ vars.AKS_NAME }}
-          AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+          AKS_TAG_COHORT: ${{ secrets.AKS_TAG_COHORT }}
+          AKS_TAG_SCOPE: ${{ secrets.AKS_TAG_SCOPE }}
+        run: |
+          if [ -z "$AKS_TAG_COHORT" ] || [ -z "$AKS_TAG_SCOPE" ]; then
+            echo "Missing AKS_TAG_COHORT or AKS_TAG_SCOPE secret" >&2
+            exit 1
+          fi
+
+          AKS_COUNT=$(az aks list \
+            --query "length([?tags.cohort=='$AKS_TAG_COHORT' && tags.scope=='$AKS_TAG_SCOPE'])" -o tsv)
+
+          if [ "$AKS_COUNT" -eq 0 ]; then
+            echo "No AKS found with tags cohort=$AKS_TAG_COHORT and scope=$AKS_TAG_SCOPE" >&2
+            exit 1
+          fi
+
+          if [ "$AKS_COUNT" -gt 1 ]; then
+            echo "Multiple AKS found with tags cohort=$AKS_TAG_COHORT and scope=$AKS_TAG_SCOPE" >&2
+            echo "Refine AKS tags so they match exactly one cluster." >&2
+            exit 1
+          fi
+
+          AKS_NAME=$(az aks list \
+            --query "[?tags.cohort=='$AKS_TAG_COHORT' && tags.scope=='$AKS_TAG_SCOPE'] | [0].name" -o tsv)
+          AKS_RESOURCE_GROUP=$(az aks list \
+            --query "[?tags.cohort=='$AKS_TAG_COHORT' && tags.scope=='$AKS_TAG_SCOPE'] | [0].resourceGroup" -o tsv)
+
+          if [ -z "$AKS_NAME" ] || [ -z "$AKS_RESOURCE_GROUP" ]; then
+            echo "Unable to resolve AKS name or resource group" >&2
+            exit 1
+          fi
+
+          echo "name=$AKS_NAME" >> "$GITHUB_OUTPUT"
+          echo "resource_group=$AKS_RESOURCE_GROUP" >> "$GITHUB_OUTPUT"
+
+      - name: Get AKS credentials
         run: |
           az aks get-credentials \
-            --resource-group "$AKS_RESOURCE_GROUP" \
-            --name "$AKS_NAME" \
+            --resource-group "${{ steps.aks.outputs.resource_group }}" \
+            --name "${{ steps.aks.outputs.name }}" \
             --overwrite-existing
 
       - name: Set up Helm
@@ -120,30 +174,30 @@ jobs:
       - name: Resolve Key Vault name (query)
         id: kv
         env:
-          KEYVAULT_TAG_OWNER: ${{ secrets.KEYVAULT_TAG_OWNER }}
-          KEYVAULT_TAG_ENVIRONMENT: ${{ secrets.KEYVAULT_TAG_ENVIRONMENT }}
+          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
+          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
         run: |
-          if [ -z "$KEYVAULT_TAG_OWNER" ] || [ -z "$KEYVAULT_TAG_ENVIRONMENT" ]; then
-            echo "Missing KEYVAULT_TAG_OWNER or KEYVAULT_TAG_ENVIRONMENT secret" >&2
+          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
+            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
             exit 1
           fi
 
           KV_COUNT=$(az keyvault list \
-            --query "length([?tags.owner=='$KEYVAULT_TAG_OWNER' && tags.environment=='$KEYVAULT_TAG_ENVIRONMENT'])" -o tsv)
+            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
 
           if [ "$KV_COUNT" -eq 0 ]; then
-            echo "No Key Vault found with tags owner=$KEYVAULT_TAG_OWNER and environment=$KEYVAULT_TAG_ENVIRONMENT" >&2
+            echo "No Key Vault found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
             exit 1
           fi
 
           if [ "$KV_COUNT" -gt 1 ]; then
-            echo "Multiple Key Vaults found with tags owner=$KEYVAULT_TAG_OWNER and environment=$KEYVAULT_TAG_ENVIRONMENT" >&2
+            echo "Multiple Key Vaults found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
             echo "Refine tags so they match exactly one Key Vault." >&2
             exit 1
           fi
 
           KEYVAULT_NAME=$(az keyvault list \
-            --query "[?tags.owner=='$KEYVAULT_TAG_OWNER' && tags.environment=='$KEYVAULT_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
 
           if [ -z "$KEYVAULT_NAME" ]; then
             echo "Unable to resolve Key Vault name" >&2
