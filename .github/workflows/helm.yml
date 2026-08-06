@@ -1,11 +1,21 @@
 name: Helm CI/CD for AppBAQ Backend
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
+    paths:
+      - helm/appbaq/**
+      - .github/workflows/helm.yml
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to run on AKS"
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
 
 permissions:
   contents: read
@@ -22,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -37,13 +47,13 @@ jobs:
 
   deploy-aks:
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     needs: lint-and-validate
     environment:
       name: aks-deploy
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -102,47 +112,9 @@ jobs:
         with:
           version: v3.15.4
 
-      - name: Resolve ACR login server (query)
-        id: acr
-        env:
-          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
-          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
-        run: |
-          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
-            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
-            exit 1
-          fi
-
-          ACR_COUNT=$(az acr list \
-            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
-
-          if [ "$ACR_COUNT" -eq 0 ]; then
-            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
-            exit 1
-          fi
-
-          if [ "$ACR_COUNT" -gt 1 ]; then
-            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
-            echo "Refine tags so they match exactly one ACR." >&2
-            exit 1
-          fi
-
-          ACR_LOGIN_SERVER=$(az acr list \
-            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
-
-          if [ -z "$ACR_LOGIN_SERVER" ]; then
-            echo "Unable to resolve ACR login server" >&2
-            exit 1
-          fi
-
-          echo "image_repository=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute image tag
-        id: meta
-        run: echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
-
       - name: Resolve Key Vault name (query)
         id: kv
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy') }}
         env:
           AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
           AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
@@ -177,16 +149,17 @@ jobs:
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Deploy chart
-        env:
-          IMAGE_REPOSITORY: ${{ steps.acr.outputs.image_repository }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'destroy') }}
         run: |
           helm upgrade --install "${{ env.RELEASE_NAME }}" "${{ env.CHART_PATH }}" \
             --namespace "${{ env.NAMESPACE }}" \
             --create-namespace \
-            --set backend.image.repository="$IMAGE_REPOSITORY" \
-            --set backend.image.tag="$IMAGE_TAG" \
             --set backend.secret.keyVault.enabled=true \
             --set backend.secret.keyVault.secretProviderClass.keyVaultName="${{ steps.kv.outputs.name }}" \
             --set-string backend.secret.keyVault.secretProviderClass.clientId="${{ secrets.KEYVAULT_CLIENT_ID }}" \
             --set-string backend.secret.keyVault.secretProviderClass.tenantId="${{ secrets.AZURE_TENANT_ID }}"
+
+      - name: Destroy release
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
+        run: |
+          helm uninstall "${{ env.RELEASE_NAME }}" --namespace "${{ env.NAMESPACE }}"

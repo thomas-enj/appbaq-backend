@@ -40,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
 
     environment: publish-registry
+    outputs:
+      acr_login_server: ${{ steps.acr.outputs.login_server }}
     
     permissions:
       id-token: write
@@ -47,10 +49,7 @@ jobs:
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set short SHA
-        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_ENV
+        uses: actions/checkout@v7
 
       - name: Azure login
         uses: azure/login@v2
@@ -59,21 +58,59 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Resolve ACR from tags (query)
+        id: acr
+        env:
+          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
+          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
+        run: |
+          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
+            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
+            exit 1
+          fi
+
+          ACR_COUNT=$(az acr list \
+            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
+
+          if [ "$ACR_COUNT" -eq 0 ]; then
+            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            exit 1
+          fi
+
+          if [ "$ACR_COUNT" -gt 1 ]; then
+            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            echo "Refine tags so they match exactly one ACR." >&2
+            exit 1
+          fi
+
+          ACR_NAME=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+          ACR_LOGIN_SERVER=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
+
+          if [ -z "$ACR_NAME" ] || [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "Unable to resolve ACR name or login server" >&2
+            exit 1
+          fi
+
+          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
       - name: Login to Azure Container Registry
-        run: az acr login --name ${{ secrets.ACR_NAME }}
+        run: az acr login --name "${{ steps.acr.outputs.name }}"
 
       - name: Build and Push Docker image
         env:
-          REGISTRY_URL: ${{ secrets.ACR_NAME }}.azurecr.io
+          REGISTRY_URL: ${{ steps.acr.outputs.login_server }}
         run: |
-          IMAGE_TAG="${{ env.SHORT_SHA }}"
+          IMAGE_TAG="${GITHUB_SHA::8}"
           
-          echo "Building and pushing $SERVICE_NAME:$IMAGE_TAG and $SERVICE_NAME:latest to ${{ secrets.ACR_NAME }}"
+          echo "Building and pushing $SERVICE_NAME:$IMAGE_TAG and $SERVICE_NAME:latest to $REGISTRY_URL"
           
           docker build \
             -t "$REGISTRY_URL/$SERVICE_NAME:$IMAGE_TAG" \
             -t "$REGISTRY_URL/$SERVICE_NAME:latest" \
-            -f docker/${SERVICE_NAME}.Dockerfile .
+            -f Dockerfile .
             
           docker push "$REGISTRY_URL/$SERVICE_NAME:$IMAGE_TAG"
           docker push "$REGISTRY_URL/$SERVICE_NAME:latest"
@@ -90,7 +127,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Needed to be able to switch branch and commit properly
           fetch-depth: 0 
@@ -98,9 +135,11 @@ jobs:
       - name: Update manifest and create GitHub PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACR_LOGIN_SERVER: ${{ needs.build_push.outputs.acr_login_server }}
         run: |
           export SHORT_SHA="${GITHUB_SHA::8}"
           export BRANCH_NAME="bump-version-${SHORT_SHA}"
+          export IMAGE_REPOSITORY="${ACR_LOGIN_SERVER}/${SERVICE_NAME}"
 
           # Configure GitHub Actions bot user for committing changes
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -110,7 +149,8 @@ jobs:
           git checkout -b $BRANCH_NAME
 
           # Update tags in values.yaml
-          yq -i ".services.${SERVICE_NAME}.image.tag = env(SHORT_SHA)" helm/appbaq/values.yaml
+          yq -i '.backend.image.repository = env(IMAGE_REPOSITORY)' helm/appbaq/values.yaml
+          yq -i '.backend.image.tag = env(SHORT_SHA)' helm/appbaq/values.yaml
 
           # Update appVersion in Chart.yaml
           yq -i ".appVersion = env(SHORT_SHA)" helm/appbaq/Chart.yaml
