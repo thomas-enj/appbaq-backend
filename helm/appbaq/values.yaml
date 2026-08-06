@@ -1,0 +1,70 @@
+global:
+  namespace: appbaq-then
+  manageNamespace: true
+  labels:
+    app.kubernetes.io/part-of: appbaq
+    environment: non-production
+    owner: thomas-enjalbert
+
+frontendLink:
+  name: appbaq-frontend
+  component: frontend
+
+backend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: # backend image repository
+    tag: # backend image tag
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  config:
+    constants:
+      springProfilesActive: aks
+      redisPort: "6380"
+      redisSslEnabled: "true"
+    infra:
+      appCorsAllowedOrigins: # frontend url
+      storageContainerName: # storage container name
+  secret:
+    name: appbaq-backend-secret
+    direct:
+      create: false
+      data:
+        SPRING_DATASOURCE_URL: # jdbc:postgresql://<db-host>:5432/<db-name>
+        SPRING_DATASOURCE_USERNAME: # db username
+        SPRING_DATASOURCE_PASSWORD: # db password
+        REDIS_HOSTNAME: # redis hostname
+        REDIS_PASSWORD: # redis password
+        BACKEND_API_KEY: # shared secret for frontend-backend communication
+        STORAGE_ACCOUNT_NAME: # storage account name
+        STORAGE_SAS_TOKEN: # storage SAS token
+    keyVault:
+      enabled: false
+      secretProviderClass:
+        name: appbaq-backend-kv
+        clientId: # aks managed identity client id
+        keyVaultName: # key vault name
+        tenantId: # tenant id
+        syncToK8sSecretName: appbaq-backend-secret
+        objects:
+          springDatasourceUrl: spring-datasource-url
+          springDatasourceUsername: spring-datasource-username
+          springDatasourcePassword: spring-datasource-password
+          redisHostname: redis-hostname
+          redisPassword: redis-password
+          backendApiKey: backend-api-key
+          storageAccountName: storage-account-name
+          storageSasToken: storage-sas-token
+
+networkPolicy:
+  enabled: true
+  defaultDenyIngress: true

@@ -1,0 +1,18 @@
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appbaq.backendName" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+{{ include "appbaq.backendLabels" . | nindent 4 }}
+spec:
+  type: {{ .Values.backend.service.type }}
+  selector:
+{{ include "appbaq.backendSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.backend.service.port }}
+      targetPort: http
+{{- end }}
