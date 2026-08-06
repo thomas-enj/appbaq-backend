@@ -1,0 +1,15 @@
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: appbaq-backend-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+{{ include "appbaq.backendLabels" . | nindent 4 }}
+data:
+  SPRING_PROFILES_ACTIVE: {{ .Values.backend.config.constants.springProfilesActive | quote }}
+  APP_CORS_ALLOWED_ORIGINS: {{ .Values.backend.config.infra.appCorsAllowedOrigins | quote }}
+  REDIS_PORT: {{ .Values.backend.config.constants.redisPort | quote }}
+  REDIS_SSL_ENABLED: {{ .Values.backend.config.constants.redisSslEnabled | quote }}
+  STORAGE_CONTAINER_NAME: {{ .Values.backend.config.infra.storageContainerName | quote }}
+{{- end }}
