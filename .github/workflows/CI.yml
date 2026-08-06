@@ -4,8 +4,15 @@ on:
   push:
   pull_request:
 
+env:
+  AZURE_CORE_ONLY_SHOW_ERRORS: "true"
+  AZURE_DEFAULTS_OUTPUT: "none"
+  OIDC_DEBUG: "false"
+  SERVICE_NAME: appbaq-backend
+
 jobs:
   build:
+    name: Build and Test Java Application
     runs-on: ubuntu-latest
 
     steps:
@@ -25,4 +32,106 @@ jobs:
       - name: Maven clean package
         run: ./mvnw clean package
 
+  build_push:
+    name: Build and Push Docker Image
+    needs: build
+    # Deployment only on the main branch (not on PR or other branches)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    environment: publish-registry
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_ENV
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Build and Push Docker image
+        env:
+          REGISTRY_URL: ${{ secrets.ACR_NAME }}.azurecr.io
+        run: |
+          IMAGE_TAG="${{ env.SHORT_SHA }}"
+          
+          echo "Building and pushing $SERVICE_NAME:$IMAGE_TAG and $SERVICE_NAME:latest to ${{ secrets.ACR_NAME }}"
+          
+          docker build \
+            -t "$REGISTRY_URL/$SERVICE_NAME:$IMAGE_TAG" \
+            -t "$REGISTRY_URL/$SERVICE_NAME:latest" \
+            -f docker/${SERVICE_NAME}.Dockerfile .
+            
+          docker push "$REGISTRY_URL/$SERVICE_NAME:$IMAGE_TAG"
+          docker push "$REGISTRY_URL/$SERVICE_NAME:latest"
+
+  update_helm:
+    name: Update Helm Manifests
+    needs: build_push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Needed to be able to switch branch and commit properly
+          fetch-depth: 0 
+
+      - name: Update manifest and create GitHub PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export SHORT_SHA="${GITHUB_SHA::8}"
+          export BRANCH_NAME="bump-version-${SHORT_SHA}"
+
+          # Configure GitHub Actions bot user for committing changes
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          # Create and switch to the new branch
+          git checkout -b $BRANCH_NAME
+
+          # Update tags in values.yaml
+          yq -i ".services.${SERVICE_NAME}.image.tag = env(SHORT_SHA)" helm/appbaq/values.yaml
+
+          # Update appVersion in Chart.yaml
+          yq -i ".appVersion = env(SHORT_SHA)" helm/appbaq/Chart.yaml
+
+          # Increment Chart version (patch)
+          CURRENT_VERSION=$(yq '.version' helm/appbaq/Chart.yaml)
+          major=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+          minor=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+          patch=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+          export NEW_CHART_VERSION="$major.$minor.$((patch + 1))"
+          yq -i '.version = env(NEW_CHART_VERSION)' helm/appbaq/Chart.yaml
+
+          # Commit et Push changes
+          git add helm/appbaq/values.yaml helm/appbaq/Chart.yaml
+          git commit -m "cd: bump image to ${SHORT_SHA} and chart to ${NEW_CHART_VERSION}"
+          git push -u origin $BRANCH_NAME
+
+          # Create Pull Request via GitHub CLI
+          gh pr create \
+            --base main \
+            --head $BRANCH_NAME \
+            --title "Production release: version $SHORT_SHA" \
+            --body "Automatic update following commit ${{ github.sha }}. The \`${SERVICE_NAME}\` image has been updated to tag \`${SHORT_SHA}\`."
 

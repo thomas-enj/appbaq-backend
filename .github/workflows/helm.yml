@@ -35,81 +35,12 @@ jobs:
       - name: Render manifests
         run: helm template test ${{ env.CHART_PATH }} > /dev/null
 
-  build-and-push:
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    needs: lint-and-validate
-    outputs:
-      image-repository: ${{ steps.acr.outputs.image_repository }}
-      image-tag: ${{ steps.meta.outputs.image_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Resolve ACR login server (query)
-        id: acr
-        env:
-          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
-          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
-        run: |
-          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
-            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
-            exit 1
-          fi
-
-          ACR_COUNT=$(az acr list \
-            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
-
-          if [ "$ACR_COUNT" -eq 0 ]; then
-            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
-            exit 1
-          fi
-
-          if [ "$ACR_COUNT" -gt 1 ]; then
-            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
-            echo "Refine tags so they match exactly one ACR." >&2
-            exit 1
-          fi
-
-          ACR_NAME=$(az acr list \
-            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
-          ACR_LOGIN_SERVER=$(az acr list \
-            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
-
-          if [ -z "$ACR_NAME" ] || [ -z "$ACR_LOGIN_SERVER" ]; then
-            echo "Unable to resolve ACR name or login server" >&2
-            exit 1
-          fi
-          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
-          echo "login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
-          echo "image_repository=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
-
-      - name: ACR docker login
-        run: az acr login --name "${{ steps.acr.outputs.name }}"
-
-      - name: Compute image tag
-        id: meta
-        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push image
-        env:
-          IMAGE_REPOSITORY: ${{ steps.acr.outputs.image_repository }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
-        run: |
-          docker build -t "$IMAGE_REPOSITORY:$IMAGE_TAG" .
-          docker push "$IMAGE_REPOSITORY:$IMAGE_TAG"
-
   deploy-aks:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
-    needs: build-and-push
+    needs: lint-and-validate
+    environment:
+      name: aks-deploy
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -171,6 +102,45 @@ jobs:
         with:
           version: v3.15.4
 
+      - name: Resolve ACR login server (query)
+        id: acr
+        env:
+          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
+          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
+        run: |
+          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
+            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
+            exit 1
+          fi
+
+          ACR_COUNT=$(az acr list \
+            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
+
+          if [ "$ACR_COUNT" -eq 0 ]; then
+            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            exit 1
+          fi
+
+          if [ "$ACR_COUNT" -gt 1 ]; then
+            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            echo "Refine tags so they match exactly one ACR." >&2
+            exit 1
+          fi
+
+          ACR_LOGIN_SERVER=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
+
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "Unable to resolve ACR login server" >&2
+            exit 1
+          fi
+
+          echo "image_repository=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tag
+        id: meta
+        run: echo "image_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
       - name: Resolve Key Vault name (query)
         id: kv
         env:
@@ -208,8 +178,8 @@ jobs:
 
       - name: Deploy chart
         env:
-          IMAGE_REPOSITORY: ${{ needs.build-and-push.outputs.image-repository }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+          IMAGE_REPOSITORY: ${{ steps.acr.outputs.image_repository }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
         run: |
           helm upgrade --install "${{ env.RELEASE_NAME }}" "${{ env.CHART_PATH }}" \
             --namespace "${{ env.NAMESPACE }}" \
