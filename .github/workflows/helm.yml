@@ -1,0 +1,168 @@
+name: Helm CI/CD for AppBAQ Backend
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CHART_PATH: helm/appbaq
+  RELEASE_NAME: appbaq-backend
+  NAMESPACE: appbaq-then
+  IMAGE_NAME: appbaq-backend
+
+jobs:
+  lint-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Lint chart
+        run: helm lint ${{ env.CHART_PATH }} --strict
+
+      - name: Render manifests
+        run: helm template test ${{ env.CHART_PATH }} > /dev/null
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: lint-and-validate
+    outputs:
+      image-repository: ${{ steps.acr.outputs.image_repository }}
+      image-tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve ACR login server (query)
+        id: acr
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+          ACR_RESOURCE_GROUP: ${{ vars.ACR_RESOURCE_GROUP }}
+        run: |
+          ACR_LOGIN_SERVER=$(az acr show \
+            --name "$ACR_NAME" \
+            --resource-group "$ACR_RESOURCE_GROUP" \
+            --query loginServer -o tsv)
+          if [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "ACR login server not found" >&2
+            exit 1
+          fi
+          echo "login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+          echo "image_repository=$ACR_LOGIN_SERVER/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+
+      - name: ACR docker login
+        env:
+          ACR_NAME: ${{ vars.ACR_NAME }}
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Compute image tag
+        id: meta
+        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        env:
+          IMAGE_REPOSITORY: ${{ steps.acr.outputs.image_repository }}
+          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          docker build -t "$IMAGE_REPOSITORY:$IMAGE_TAG" .
+          docker push "$IMAGE_REPOSITORY:$IMAGE_TAG"
+
+  deploy-aks:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: build-and-push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS credentials
+        env:
+          AKS_NAME: ${{ vars.AKS_NAME }}
+          AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+        run: |
+          az aks get-credentials \
+            --resource-group "$AKS_RESOURCE_GROUP" \
+            --name "$AKS_NAME" \
+            --overwrite-existing
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Resolve Key Vault name (query)
+        id: kv
+        env:
+          KEYVAULT_TAG_OWNER: ${{ secrets.KEYVAULT_TAG_OWNER }}
+          KEYVAULT_TAG_ENVIRONMENT: ${{ secrets.KEYVAULT_TAG_ENVIRONMENT }}
+        run: |
+          if [ -z "$KEYVAULT_TAG_OWNER" ] || [ -z "$KEYVAULT_TAG_ENVIRONMENT" ]; then
+            echo "Missing KEYVAULT_TAG_OWNER or KEYVAULT_TAG_ENVIRONMENT secret" >&2
+            exit 1
+          fi
+
+          KV_COUNT=$(az keyvault list \
+            --query "length([?tags.owner=='$KEYVAULT_TAG_OWNER' && tags.environment=='$KEYVAULT_TAG_ENVIRONMENT'])" -o tsv)
+
+          if [ "$KV_COUNT" -eq 0 ]; then
+            echo "No Key Vault found with tags owner=$KEYVAULT_TAG_OWNER and environment=$KEYVAULT_TAG_ENVIRONMENT" >&2
+            exit 1
+          fi
+
+          if [ "$KV_COUNT" -gt 1 ]; then
+            echo "Multiple Key Vaults found with tags owner=$KEYVAULT_TAG_OWNER and environment=$KEYVAULT_TAG_ENVIRONMENT" >&2
+            echo "Refine tags so they match exactly one Key Vault." >&2
+            exit 1
+          fi
+
+          KEYVAULT_NAME=$(az keyvault list \
+            --query "[?tags.owner=='$KEYVAULT_TAG_OWNER' && tags.environment=='$KEYVAULT_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+
+          if [ -z "$KEYVAULT_NAME" ]; then
+            echo "Unable to resolve Key Vault name" >&2
+            exit 1
+          fi
+
+          echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy chart
+        env:
+          IMAGE_REPOSITORY: ${{ needs.build-and-push.outputs.image-repository }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          helm upgrade --install "${{ env.RELEASE_NAME }}" "${{ env.CHART_PATH }}" \
+            --namespace "${{ env.NAMESPACE }}" \
+            --create-namespace \
+            --set backend.image.repository="$IMAGE_REPOSITORY" \
+            --set backend.image.tag="$IMAGE_TAG" \
+            --set backend.secret.keyVault.enabled=true \
+            --set backend.secret.keyVault.secretProviderClass.keyVaultName="${{ steps.kv.outputs.name }}" \
+            --set-string backend.secret.keyVault.secretProviderClass.clientId="${{ secrets.KEYVAULT_CLIENT_ID }}" \
+            --set-string backend.secret.keyVault.secretProviderClass.tenantId="${{ secrets.AZURE_TENANT_ID }}"
