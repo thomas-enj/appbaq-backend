@@ -1,4 +1,4 @@
-name: CI
+name: Backend Build & Release Prep
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
 env:
   AZURE_CORE_ONLY_SHOW_ERRORS: "true"
   AZURE_DEFAULTS_OUTPUT: "none"
-  OIDC_DEBUG: "false"
   SERVICE_NAME: appbaq-backend
 
 jobs:
@@ -132,13 +131,20 @@ jobs:
           # Needed to be able to switch branch and commit properly
           fetch-depth: 0 
 
+      - name: Install yq
+        run: |
+          YQ_VERSION=v4.44.3
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
       - name: Update manifest and create GitHub PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACR_LOGIN_SERVER: ${{ needs.build_push.outputs.acr_login_server }}
         run: |
           export SHORT_SHA="${GITHUB_SHA::8}"
-          export BRANCH_NAME="bump-version-${SHORT_SHA}"
+          export RANDOM_SUFFIX="r${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          export BRANCH_NAME="bump-version-${SHORT_SHA}-${RANDOM_SUFFIX}"
           export IMAGE_REPOSITORY="${ACR_LOGIN_SERVER}/${SERVICE_NAME}"
 
           # Configure GitHub Actions bot user for committing changes
@@ -173,5 +179,5 @@ jobs:
             --base main \
             --head $BRANCH_NAME \
             --title "Production release: version $SHORT_SHA" \
-            --body "Automatic update following commit ${{ github.sha }}. The \`${SERVICE_NAME}\` image has been updated to tag \`${SHORT_SHA}\`."
+            --body "Automatic update following commit ${{ github.sha }}. The ${SERVICE_NAME} image has been updated to tag ${SHORT_SHA}. Branch suffix ${RANDOM_SUFFIX} is only a workflow-run discriminator and is not part of the commit id."
 
