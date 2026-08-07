@@ -150,6 +150,18 @@ jobs:
 
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Adopt existing namespace for Helm
+        run: |
+          if kubectl get namespace "${{ env.NAMESPACE }}" > /dev/null 2>&1; then
+            kubectl label namespace "${{ env.NAMESPACE }}" \
+              app.kubernetes.io/managed-by=Helm \
+              --overwrite
+            kubectl annotate namespace "${{ env.NAMESPACE }}" \
+              meta.helm.sh/release-name="${{ env.RELEASE_NAME }}" \
+              meta.helm.sh/release-namespace="${{ env.NAMESPACE }}" \
+              --overwrite
+          fi
+
       - name: Deploy chart
         run: |
           helm upgrade --install "${{ env.RELEASE_NAME }}" "${{ env.CHART_PATH }}" \
