@@ -5,17 +5,15 @@ global:
     app.kubernetes.io/part-of: appbaq
     environment: non-production
     owner: thomas-enjalbert
-
 frontendLink:
   name: appbaq-frontend
   component: frontend
-
 backend:
   enabled: true
   replicaCount: 1
   image:
-    repository: # backend image repository
-    tag: # backend image tag
+    repository: baqacrthomasenjalbertykj4.azurecr.io/appbaq-backend # backend image repository
+    tag: bace93bd # backend image tag
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -53,7 +51,6 @@ backend:
           backendApiKey: backend-api-key
           storageAccountName: storage-account-name
           storageSasToken: storage-sas-token
-
 networkPolicy:
   enabled: true
   defaultDenyIngress: true
