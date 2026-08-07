@@ -16,6 +16,15 @@ spec:
       labels:
 {{ include "appbaq.backendLabels" . | nindent 8 }}
     spec:
+{{- if .Values.backend.secret.keyVault.enabled }}
+      volumes:
+        - name: secrets-store-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ .Values.backend.secret.keyVault.secretProviderClass.name | quote }}
+{{- end }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
@@ -23,6 +32,12 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+{{- if .Values.backend.secret.keyVault.enabled }}
+          volumeMounts:
+            - name: secrets-store-inline
+              mountPath: /mnt/secrets-store
+              readOnly: true
+{{- end }}
           envFrom:
             - configMapRef:
                 name: appbaq-backend-config
