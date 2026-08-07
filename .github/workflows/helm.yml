@@ -147,7 +147,15 @@ jobs:
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Deploy chart
+        env:
+          KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
+          if [ -z "$KEYVAULT_CLIENT_ID" ] || [ -z "$AZURE_TENANT_ID" ]; then
+            echo "Missing KEYVAULT_CLIENT_ID or AZURE_TENANT_ID secret required by SecretProviderClass" >&2
+            exit 1
+          fi
+
           helm upgrade --install "${{ env.RELEASE_NAME }}" "${{ env.CHART_PATH }}" \
             --namespace "${{ env.NAMESPACE }}" \
             --create-namespace \
@@ -155,8 +163,8 @@ jobs:
             --set backend.secret.keyVault.enabled=true \
             --set backend.secret.keyVault.useVMManagedIdentity=true \
             --set backend.secret.keyVault.secretProviderClass.keyVaultName="${{ steps.kv.outputs.name }}" \
-            --set-string backend.secret.keyVault.secretProviderClass.clientId="${{ secrets.KEYVAULT_CLIENT_ID }}" \
-            --set-string backend.secret.keyVault.secretProviderClass.tenantId="${{ secrets.AZURE_TENANT_ID }}"
+            --set-string backend.secret.keyVault.secretProviderClass.clientId="$KEYVAULT_CLIENT_ID" \
+            --set-string backend.secret.keyVault.secretProviderClass.tenantId="$AZURE_TENANT_ID"
 
       - name: Debug backend deployment
         continue-on-error: true
