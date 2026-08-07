@@ -36,17 +36,6 @@ backend:
       storageContainerName: # storage container name
   secret:
     name: appbaq-backend-secret
-    direct:
-      create: false
-      data:
-        SPRING_DATASOURCE_URL: # jdbc:postgresql://<db-host>:5432/<db-name>
-        SPRING_DATASOURCE_USERNAME: # db username
-        SPRING_DATASOURCE_PASSWORD: # db password
-        REDIS_HOSTNAME: # redis hostname
-        REDIS_PASSWORD: # redis password
-        BACKEND_API_KEY: # shared secret for frontend-backend communication
-        STORAGE_ACCOUNT_NAME: # storage account name
-        STORAGE_SAS_TOKEN: # storage SAS token
     keyVault:
       enabled: false
       secretProviderClass:
