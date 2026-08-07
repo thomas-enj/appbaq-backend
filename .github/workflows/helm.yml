@@ -157,6 +157,26 @@ jobs:
             --set-string backend.secret.keyVault.secretProviderClass.clientId="${{ secrets.KEYVAULT_CLIENT_ID }}" \
             --set-string backend.secret.keyVault.secretProviderClass.tenantId="${{ secrets.AZURE_TENANT_ID }}"
 
+      - name: Debug backend deployment
+        continue-on-error: true
+        run: |
+          echo "=== Backend deploy image ==="
+          kubectl get deploy appbaq-backend -n "${{ env.NAMESPACE }}" -o jsonpath='{.spec.template.spec.containers[0].image}' ; echo
+
+          echo "=== Backend pod status ==="
+          kubectl get pods -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o wide || true
+
+          echo "=== Backend service and endpoints ==="
+          kubectl get svc appbaq-backend -n "${{ env.NAMESPACE }}" -o wide || true
+          kubectl get endpoints appbaq-backend -n "${{ env.NAMESPACE }}" -o wide || true
+
+          echo "=== Backend config map values (CORS/storage) ==="
+          kubectl get configmap appbaq-backend-config -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.APP_CORS_ALLOWED_ORIGINS}' ; echo
+          kubectl get configmap appbaq-backend-config -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.STORAGE_CONTAINER_NAME}' ; echo
+
+          echo "=== Recent backend logs ==="
+          kubectl logs -n "${{ env.NAMESPACE }}" deploy/appbaq-backend --tail=160 || true
+
   destroy-aks:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy' }}
