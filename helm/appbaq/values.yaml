@@ -31,7 +31,7 @@ backend:
       redisSslEnabled: "true"
     infra:
       appCorsAllowedOrigins: # frontend url
-      storageContainerName: # storage container name
+      storageContainerName: quiz-results
   secret:
     name: appbaq-backend-secret
     keyVault:
