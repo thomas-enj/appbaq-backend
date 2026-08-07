@@ -153,6 +153,7 @@ jobs:
             --create-namespace \
             --set global.manageNamespace=false \
             --set backend.secret.keyVault.enabled=true \
+            --set backend.secret.keyVault.useVMManagedIdentity=true \
             --set backend.secret.keyVault.secretProviderClass.keyVaultName="${{ steps.kv.outputs.name }}" \
             --set-string backend.secret.keyVault.secretProviderClass.clientId="${{ secrets.KEYVAULT_CLIENT_ID }}" \
             --set-string backend.secret.keyVault.secretProviderClass.tenantId="${{ secrets.AZURE_TENANT_ID }}"

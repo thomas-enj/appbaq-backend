@@ -36,6 +36,8 @@ backend:
     name: appbaq-backend-secret
     keyVault:
       enabled: false
+      usePodIdentity: false
+      useVMManagedIdentity: false
       secretProviderClass:
         name: appbaq-backend-kv
         clientId: # aks managed identity client id
