@@ -16,6 +16,7 @@ on:
         options:
           - deploy
           - destroy
+          - diagnose
 
 permissions:
   contents: read
@@ -350,3 +351,78 @@ jobs:
       - name: Destroy release
         run: |
           helm uninstall "${{ env.RELEASE_NAME }}" --namespace "${{ env.NAMESPACE }}"
+
+  diagnose-aks:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'diagnose' }}
+    needs: lint-and-validate
+    environment: aks-deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve AKS cluster (query)
+        id: aks
+        env:
+          AKS_TAG_COHORT: ${{ secrets.AKS_TAG_COHORT }}
+          AKS_TAG_SCOPE: ${{ secrets.AKS_TAG_SCOPE }}
+        run: |
+          if [ -z "$AKS_TAG_COHORT" ] || [ -z "$AKS_TAG_SCOPE" ]; then
+            echo "Missing AKS_TAG_COHORT or AKS_TAG_SCOPE secret" >&2
+            exit 1
+          fi
+
+          AKS_NAME=$(az aks list \
+            --query "[?tags.cohort=='$AKS_TAG_COHORT' && tags.scope=='$AKS_TAG_SCOPE'] | [0].name" -o tsv)
+          AKS_RESOURCE_GROUP=$(az aks list \
+            --query "[?tags.cohort=='$AKS_TAG_COHORT' && tags.scope=='$AKS_TAG_SCOPE'] | [0].resourceGroup" -o tsv)
+
+          if [ -z "$AKS_NAME" ] || [ -z "$AKS_RESOURCE_GROUP" ]; then
+            echo "Unable to resolve AKS name or resource group" >&2
+            exit 1
+          fi
+
+          echo "name=$AKS_NAME" >> "$GITHUB_OUTPUT"
+          echo "resource_group=$AKS_RESOURCE_GROUP" >> "$GITHUB_OUTPUT"
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "${{ steps.aks.outputs.resource_group }}" \
+            --name "${{ steps.aks.outputs.name }}" \
+            --admin \
+            --overwrite-existing
+
+      - name: Live cluster diagnostics
+        run: |
+          echo "=== Backend pods ==="
+          kubectl get pods -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o wide
+
+          echo "=== Frontend pods ==="
+          kubectl get pods -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-frontend -o wide || true
+
+          echo "=== Services and endpoints ==="
+          kubectl get svc -n "${{ env.NAMESPACE }}" -o wide
+          kubectl get endpoints -n "${{ env.NAMESPACE }}" -o wide
+
+          BACKEND_POD=$(kubectl get pod -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          if [ -n "$BACKEND_POD" ]; then
+            echo "=== Describe backend pod ==="
+            kubectl describe pod "$BACKEND_POD" -n "${{ env.NAMESPACE }}"
+
+            # Redact credentials/tokens that could leak into application logs (URLs, Authorization headers, connection strings).
+            REDACT='s#://[^/@[:space:]]+:[^/@[:space:]]+@#://***:***@#g; s/([Pp]assword)[=:][^&[:space:]"'"'"']+/\1=***/g; s/(Authorization:[[:space:]]*Bearer)[[:space:]]+[^[:space:]]+/\1 ***/g; s/(AccountKey=)[^;[:space:]]+/\1***/g'
+
+            echo "=== Backend current logs (redacted) ==="
+            kubectl logs "$BACKEND_POD" -n "${{ env.NAMESPACE }}" --tail=200 2>/dev/null | sed -E "$REDACT" || true
+
+            echo "=== Backend previous container logs (if it crashed, redacted) ==="
+            kubectl logs "$BACKEND_POD" -n "${{ env.NAMESPACE }}" --previous --tail=200 2>/dev/null | sed -E "$REDACT" || true
+          fi
