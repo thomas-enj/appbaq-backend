@@ -111,6 +111,49 @@ jobs:
         with:
           version: v3.15.4
 
+      - name: Resolve ACR from tags (query)
+        id: acr
+        env:
+          AZURE_TAG_OWNER: ${{ secrets.AZURE_TAG_OWNER }}
+          AZURE_TAG_ENVIRONMENT: ${{ secrets.AZURE_TAG_ENVIRONMENT }}
+        run: |
+          if [ -z "$AZURE_TAG_OWNER" ] || [ -z "$AZURE_TAG_ENVIRONMENT" ]; then
+            echo "Missing AZURE_TAG_OWNER or AZURE_TAG_ENVIRONMENT secret" >&2
+            exit 1
+          fi
+
+          ACR_COUNT=$(az acr list \
+            --query "length([?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'])" -o tsv)
+
+          if [ "$ACR_COUNT" -eq 0 ]; then
+            echo "No ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            exit 1
+          fi
+
+          if [ "$ACR_COUNT" -gt 1 ]; then
+            echo "Multiple ACR found with tags owner=$AZURE_TAG_OWNER and environment=$AZURE_TAG_ENVIRONMENT" >&2
+            echo "Refine tags so they match exactly one ACR." >&2
+            exit 1
+          fi
+
+          ACR_NAME=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+
+          if [ -z "$ACR_NAME" ]; then
+            echo "Unable to resolve ACR name" >&2
+            exit 1
+          fi
+
+          echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Grant AKS pull access to ACR
+        run: |
+          # Re-attach on every run: this is lost if the AKS or the ACR is destroyed/recreated.
+          az aks update \
+            --name "${{ steps.aks.outputs.name }}" \
+            --resource-group "${{ steps.aks.outputs.resource_group }}" \
+            --attach-acr "${{ steps.acr.outputs.name }}"
+
       - name: Resolve Key Vault name (query)
         id: kv
         env:
