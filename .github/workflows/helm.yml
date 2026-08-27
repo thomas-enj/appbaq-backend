@@ -412,6 +412,11 @@ jobs:
           kubectl get svc -n "${{ env.NAMESPACE }}" -o wide
           kubectl get endpoints -n "${{ env.NAMESPACE }}" -o wide
 
+          echo "=== Redis config actually injected (hostname/port only, no credentials) ==="
+          kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_HOSTNAME}' | base64 -d ; echo
+          kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_PORT}' | base64 -d ; echo
+          kubectl get configmap appbaq-backend-config -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_SSL_ENABLED}' ; echo
+
           BACKEND_POD=$(kubectl get pod -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -n "$BACKEND_POD" ]; then
             echo "=== Describe backend pod ==="
