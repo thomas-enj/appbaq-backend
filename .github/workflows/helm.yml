@@ -146,6 +146,28 @@ jobs:
 
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Grant Key Vault access to node managed identity
+        env:
+          KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
+        run: |
+          if [ -z "$KEYVAULT_CLIENT_ID" ]; then
+            echo "Missing KEYVAULT_CLIENT_ID secret" >&2
+            exit 1
+          fi
+
+          # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
+          KV_IDENTITY_OBJECT_ID=$(az ad sp show --id "$KEYVAULT_CLIENT_ID" --query id -o tsv)
+
+          if [ -z "$KV_IDENTITY_OBJECT_ID" ]; then
+            echo "Unable to resolve object ID for KEYVAULT_CLIENT_ID" >&2
+            exit 1
+          fi
+
+          az keyvault set-policy \
+            --name "${{ steps.kv.outputs.name }}" \
+            --object-id "$KV_IDENTITY_OBJECT_ID" \
+            --secret-permissions get list
+
       - name: Deploy chart
         env:
           KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
