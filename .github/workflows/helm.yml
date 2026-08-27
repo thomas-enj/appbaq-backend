@@ -138,13 +138,16 @@ jobs:
 
           ACR_NAME=$(az acr list \
             --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].name" -o tsv)
+          ACR_LOGIN_SERVER=$(az acr list \
+            --query "[?tags.owner=='$AZURE_TAG_OWNER' && tags.environment=='$AZURE_TAG_ENVIRONMENT'] | [0].loginServer" -o tsv)
 
-          if [ -z "$ACR_NAME" ]; then
-            echo "Unable to resolve ACR name" >&2
+          if [ -z "$ACR_NAME" ] || [ -z "$ACR_LOGIN_SERVER" ]; then
+            echo "Unable to resolve ACR name or login server" >&2
             exit 1
           fi
 
           echo "name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+          echo "login_server=$ACR_LOGIN_SERVER" >> "$GITHUB_OUTPUT"
 
       - name: Grant AKS pull access to ACR
         run: |
@@ -230,6 +233,7 @@ jobs:
             --namespace "${{ env.NAMESPACE }}" \
             --create-namespace \
             --set global.manageNamespace=false \
+            --set backend.image.repository="${{ steps.acr.outputs.login_server }}/appbaq-backend" \
             --set backend.secret.keyVault.enabled=true \
             --set backend.secret.keyVault.useVMManagedIdentity=true \
             --set backend.secret.keyVault.secretProviderClass.keyVaultName="${{ steps.kv.outputs.name }}" \
