@@ -435,6 +435,13 @@ jobs:
             echo "=== Describe backend pod ==="
             kubectl describe pod "$BACKEND_POD" -n "${{ env.NAMESPACE }}"
 
+            echo "=== Triggering /api/certifications from inside the cluster (API key never echoed) ==="
+            BACKEND_API_KEY_VALUE=$(kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.BACKEND_API_KEY}' | base64 -d)
+            kubectl run api-request-test --rm -i --restart=Never --image=curlimages/curl:8.10.1 \
+              -n "${{ env.NAMESPACE }}" \
+              --overrides="{\"spec\":{\"containers\":[{\"name\":\"api-request-test\",\"image\":\"curlimages/curl:8.10.1\",\"command\":[\"sh\",\"-c\",\"curl -sS -m 65 -o /dev/null -w 'HTTP %{http_code} in %{time_total}s\\n' -H \\\"X-Api-Key: $BACKEND_API_KEY_VALUE\\\" http://appbaq-backend:8080/api/certifications\"]}]}}" \
+              || true
+
             # Redact credentials/tokens that could leak into application logs (URLs, Authorization headers, connection strings).
             REDACT='s#://[^/@[:space:]]+:[^/@[:space:]]+@#://***:***@#g; s/([Pp]assword)[=:][^&[:space:]"'"'"']+/\1=***/g; s/(Authorization:[[:space:]]*Bearer)[[:space:]]+[^[:space:]]+/\1 ***/g; s/(AccountKey=)[^;[:space:]]+/\1***/g'
 
