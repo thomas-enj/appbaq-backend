@@ -13,7 +13,7 @@ backend:
   replicaCount: 1
   image:
     repository: baqacrthomasenjalbertywgh.azurecr.io/appbaq-backend # backend image repository
-    tag: 6f511f76 # backend image tag
+    tag: 79563c5f # backend image tag
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
