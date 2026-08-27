@@ -18,6 +18,10 @@ spring:
       host: ${REDIS_HOSTNAME:localhost}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+      # Without an explicit value, Lettuce's own default (60s) applies, hanging
+      # requests well past nginx's own timeout instead of failing fast.
+      timeout: 5000ms
+      connect-timeout: 5000ms
       ssl:
         enabled: ${REDIS_SSL_ENABLED:false}
 management:

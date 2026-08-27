@@ -7,6 +7,9 @@
     </appender>
     <logger name="org.hibernate" level="ERROR"/>
     <logger name="org.springframework.messaging" level="ERROR"/>
+    <!-- Temporary: surfaces the real Lettuce/TLS handshake error instead of a silent hang. Revert once diagnosed. -->
+    <logger name="io.lettuce.core" level="DEBUG"/>
+    <logger name="org.springframework.data.redis" level="DEBUG"/>
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
     </root>
