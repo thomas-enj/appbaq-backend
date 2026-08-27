@@ -156,7 +156,12 @@ jobs:
           fi
 
           # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
-          KV_IDENTITY_OBJECT_ID=$(az ad sp show --id "$KEYVAULT_CLIENT_ID" --query id -o tsv)
+          # Read objectId straight off the AKS resource (ARM) instead of az ad sp show (Microsoft Graph),
+          # since the pipeline identity only has ARM RBAC, not Graph permissions.
+          KV_IDENTITY_OBJECT_ID=$(az aks show \
+            --name "${{ steps.aks.outputs.name }}" \
+            --resource-group "${{ steps.aks.outputs.resource_group }}" \
+            --query "identityProfile.kubeletidentity.objectId" -o tsv)
 
           if [ -z "$KV_IDENTITY_OBJECT_ID" ]; then
             echo "Unable to resolve object ID for KEYVAULT_CLIENT_ID" >&2
