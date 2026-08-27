@@ -424,6 +424,12 @@ jobs:
             -n "${{ env.NAMESPACE }}" --command --quiet -- \
             sh -c "nc -zvw5 $REDIS_HOST $REDIS_PORT_VALUE" || true
 
+          echo "=== Redis TLS + AUTH test from inside the cluster (password never echoed) ==="
+          kubectl run redis-auth-test --rm -i --restart=Never --image=redis:7-alpine \
+            -n "${{ env.NAMESPACE }}" \
+            --overrides='{"spec":{"containers":[{"name":"redis-auth-test","image":"redis:7-alpine","command":["sh","-c","redis-cli -h $REDIS_HOSTNAME -p $REDIS_PORT --tls -a \"$REDIS_PASSWORD\" --no-auth-warning PING"],"envFrom":[{"secretRef":{"name":"appbaq-backend-secret"}}]}]}}' \
+            || true
+
           BACKEND_POD=$(kubectl get pod -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -n "$BACKEND_POD" ]; then
             echo "=== Describe backend pod ==="
