@@ -417,6 +417,13 @@ jobs:
           kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_PORT}' | base64 -d ; echo
           kubectl get configmap appbaq-backend-config -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_SSL_ENABLED}' ; echo
 
+          echo "=== Redis TCP reachability test from inside the cluster ==="
+          REDIS_HOST=$(kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_HOSTNAME}' | base64 -d)
+          REDIS_PORT_VALUE=$(kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_PORT}' | base64 -d)
+          kubectl run redis-connectivity-test --rm -i --restart=Never --image=busybox:1.36 \
+            -n "${{ env.NAMESPACE }}" --command --quiet -- \
+            sh -c "nc -zvw5 $REDIS_HOST $REDIS_PORT_VALUE" || true
+
           BACKEND_POD=$(kubectl get pod -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -n "$BACKEND_POD" ]; then
             echo "=== Describe backend pod ==="
