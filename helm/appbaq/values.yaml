@@ -27,7 +27,6 @@ backend:
   config:
     constants:
       springProfilesActive: aks
-      redisPort: "6380"
       redisSslEnabled: "true"
     infra:
       appCorsAllowedOrigins: # frontend url
@@ -50,6 +49,7 @@ backend:
           springDatasourcePassword: spring-datasource-password
           redisHostname: redis-hostname
           redisPassword: redis-password
+          redisSslPort: redis-ssl-port
           backendApiKey: backend-api-key
           storageAccountName: storage-account-name
           storageSasToken: storage-sas-token
