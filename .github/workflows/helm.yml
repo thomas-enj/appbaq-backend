@@ -32,6 +32,9 @@ jobs:
     outputs:
       helm: ${{ steps.filter.outputs.helm || steps.manual.outputs.helm }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Detect changed paths
         id: filter
         if: ${{ github.event_name != 'workflow_dispatch' }}

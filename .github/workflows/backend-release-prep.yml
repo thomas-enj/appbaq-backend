@@ -19,6 +19,9 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend || steps.manual.outputs.backend }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
       - name: Detect changed paths
         id: filter
         if: ${{ github.event_name != 'workflow_dispatch' }}
