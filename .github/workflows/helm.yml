@@ -3,15 +3,7 @@ name: Helm CI/CD for AppBAQ Backend
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - .dockerignore
-      - .mvn/**
-      - .github/workflows/backend-release-prep.yml
-      - Dockerfile
-      - mvnw
-      - mvnw.cmd
-      - pom.xml
-      - src/**
+  pull_request:
   workflow_dispatch:
     inputs:
       action:
@@ -34,7 +26,33 @@ env:
   NAMESPACE: appbaq-then
 
 jobs:
+  changes:
+    name: Detect Helm changes
+    runs-on: ubuntu-latest
+    outputs:
+      helm: ${{ steps.filter.outputs.helm || steps.manual.outputs.helm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Detect changed paths
+        id: filter
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            helm:
+              - 'helm/**'
+              - '.github/workflows/helm.yml'
+
+      - name: Enable Helm workflow for manual runs
+        id: manual
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo "helm=true" >> "$GITHUB_OUTPUT"
+
   lint-and-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.helm == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

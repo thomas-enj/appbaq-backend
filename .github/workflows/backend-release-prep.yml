@@ -2,13 +2,10 @@ name: Backend Build & Release Prep
 
 on:
   push:
-    paths-ignore:
-      - helm/**
-      - .github/workflows/helm.yml
   pull_request:
-    paths-ignore:
-      - helm/**
-      - .github/workflows/helm.yml
+
+permissions:
+  contents: read
 
 env:
   AZURE_CORE_ONLY_SHOW_ERRORS: "true"
@@ -16,8 +13,35 @@ env:
   SERVICE_NAME: appbaq-backend
 
 jobs:
+  changes:
+    name: Detect backend changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend || steps.manual.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Detect changed paths
+        id: filter
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - '**'
+              - '!helm/**'
+              - '!.github/workflows/helm.yml'
+
+      - name: Enable backend workflow for manual runs
+        id: manual
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo "backend=true" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build and Test Java Application
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
