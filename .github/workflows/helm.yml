@@ -246,11 +246,39 @@ jobs:
 
       - name: Grant Key Vault access to node managed identity
         env:
+          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
           KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
         run: |
-          if [ -z "$KEYVAULT_CLIENT_ID" ]; then
-            echo "Missing KEYVAULT_CLIENT_ID secret" >&2
+          if [ -z "$AZURE_CLIENT_OBJECT_ID" ] || [ -z "$KEYVAULT_CLIENT_ID" ]; then
+            echo "Missing AZURE_CLIENT_OBJECT_ID or KEYVAULT_CLIENT_ID secret" >&2
             exit 1
+          fi
+
+          KEYVAULT_ID=$(az keyvault show \
+            --name "${{ steps.kv.outputs.name }}" \
+            --query id -o tsv)
+
+          if [ -z "$KEYVAULT_ID" ]; then
+            echo "Unable to resolve Key Vault resource ID" >&2
+            exit 1
+          fi
+
+          KEYVAULT_CONTRIBUTOR_ASSIGNMENTS=$(az role assignment list \
+            --assignee-object-id "$AZURE_CLIENT_OBJECT_ID" \
+            --scope "$KEYVAULT_ID" \
+            --role "Key Vault Contributor" \
+            --include-inherited \
+            --query "length(@)" -o tsv)
+
+          if [ "$KEYVAULT_CONTRIBUTOR_ASSIGNMENTS" -gt 0 ]; then
+            echo "GitHub Actions identity already has Key Vault Contributor access; skipping RBAC update."
+          else
+            echo "Key Vault Contributor access is missing; creating RBAC assignment."
+            az role assignment create \
+              --assignee-object-id "$AZURE_CLIENT_OBJECT_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "Key Vault Contributor" \
+              --scope "$KEYVAULT_ID"
           fi
 
           # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
