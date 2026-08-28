@@ -2,6 +2,9 @@ name: Backend Build & Release Prep
 
 on:
   push:
+    paths-ignore:
+      - helm/**
+      - .github/workflows/helm.yml
   pull_request:
 
 permissions:
