@@ -3,9 +3,15 @@ name: Helm CI/CD for AppBAQ Backend
 on:
   push:
     branches: [main]
-    paths:
-      - helm/appbaq/**
-      - .github/workflows/helm.yml
+    paths-ignore:
+      - .dockerignore
+      - .mvn/**
+      - .github/workflows/backend-release-prep.yml
+      - Dockerfile
+      - mvnw
+      - mvnw.cmd
+      - pom.xml
+      - src/**
   workflow_dispatch:
     inputs:
       action:
