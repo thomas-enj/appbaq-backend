@@ -170,7 +170,6 @@ jobs:
             --scope "$ACR_ID" \
             --role AcrPull \
             --include-inherited \
-            --all \
             --query "length(@)" -o tsv)
 
           if [ "$ACR_PULL_ASSIGNMENTS" -gt 0 ]; then
