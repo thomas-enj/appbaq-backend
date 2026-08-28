@@ -247,10 +247,23 @@ jobs:
       - name: Grant Key Vault access to node managed identity
         env:
           AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
         run: |
-          if [ -z "$AZURE_CLIENT_OBJECT_ID" ] || [ -z "$KEYVAULT_CLIENT_ID" ]; then
-            echo "Missing AZURE_CLIENT_OBJECT_ID or KEYVAULT_CLIENT_ID secret" >&2
+          if [ -z "$KEYVAULT_CLIENT_ID" ]; then
+            echo "Missing KEYVAULT_CLIENT_ID secret" >&2
+            exit 1
+          fi
+
+          if [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
+            AZURE_CLIENT_OBJECT_ID=$(az ad sp show \
+              --id "$AZURE_CLIENT_ID" \
+              --query id \
+              --output tsv 2>/dev/null || true)
+          fi
+
+          if [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
+            echo "Unable to resolve the Azure client object ID. Add AZURE_CLIENT_OBJECT_ID if the pipeline identity cannot query Microsoft Graph." >&2
             exit 1
           fi
 
@@ -282,8 +295,7 @@ jobs:
           fi
 
           # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
-          # Read objectId straight off the AKS resource (ARM) instead of az ad sp show (Microsoft Graph),
-          # since the pipeline identity only has ARM RBAC, not Graph permissions.
+          # Read the object ID straight off the AKS resource (ARM).
           KV_IDENTITY_OBJECT_ID=$(az aks show \
             --name "${{ steps.aks.outputs.name }}" \
             --resource-group "${{ steps.aks.outputs.resource_group }}" \
