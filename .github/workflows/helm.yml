@@ -152,11 +152,36 @@ jobs:
 
       - name: Grant AKS pull access to ACR
         run: |
-          # Re-attach on every run: this is lost if the AKS or the ACR is destroyed/recreated.
-          az aks update \
+          ACR_ID=$(az acr show \
+            --name "${{ steps.acr.outputs.name }}" \
+            --query id -o tsv)
+          KUBELET_OBJECT_ID=$(az aks show \
             --name "${{ steps.aks.outputs.name }}" \
             --resource-group "${{ steps.aks.outputs.resource_group }}" \
-            --attach-acr "${{ steps.acr.outputs.name }}"
+            --query "identityProfile.kubeletidentity.objectId" -o tsv)
+
+          if [ -z "$ACR_ID" ] || [ -z "$KUBELET_OBJECT_ID" ]; then
+            echo "Unable to resolve ACR ID or AKS kubelet identity object ID" >&2
+            exit 1
+          fi
+
+          ACR_PULL_ASSIGNMENTS=$(az role assignment list \
+            --assignee-object-id "$KUBELET_OBJECT_ID" \
+            --scope "$ACR_ID" \
+            --role AcrPull \
+            --include-inherited \
+            --all \
+            --query "length(@)" -o tsv)
+
+          if [ "$ACR_PULL_ASSIGNMENTS" -gt 0 ]; then
+            echo "AKS already has AcrPull access to ACR; skipping attach."
+          else
+            echo "AcrPull access is missing; attaching ACR to AKS."
+            az aks update \
+              --name "${{ steps.aks.outputs.name }}" \
+              --resource-group "${{ steps.aks.outputs.resource_group }}" \
+              --attach-acr "${{ steps.acr.outputs.name }}"
+          fi
 
       - name: Resolve Key Vault name (query)
         id: kv
@@ -215,10 +240,20 @@ jobs:
             exit 1
           fi
 
-          az keyvault set-policy \
+          KV_SECRET_PERMISSIONS=$(az keyvault show \
             --name "${{ steps.kv.outputs.name }}" \
-            --object-id "$KV_IDENTITY_OBJECT_ID" \
-            --secret-permissions get list
+            --query "length(properties.accessPolicies[?objectId=='$KV_IDENTITY_OBJECT_ID' && contains(permissions.secrets, 'get') && contains(permissions.secrets, 'list')])" \
+            -o tsv)
+
+          if [ "$KV_SECRET_PERMISSIONS" -gt 0 ]; then
+            echo "AKS kubelet identity already has Key Vault secret get/list access; skipping policy update."
+          else
+            echo "Key Vault secret access is missing; applying access policy."
+            az keyvault set-policy \
+              --name "${{ steps.kv.outputs.name }}" \
+              --object-id "$KV_IDENTITY_OBJECT_ID" \
+              --secret-permissions get list
+          fi
 
       - name: Deploy chart
         env:
