@@ -244,10 +244,8 @@ jobs:
 
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Grant Key Vault access to node managed identity
+      - name: Verify Key Vault access for node managed identity
         env:
-          AZURE_CLIENT_OBJECT_ID: ${{ secrets.AZURE_CLIENT_OBJECT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
         run: |
           if [ -z "$KEYVAULT_CLIENT_ID" ]; then
@@ -255,47 +253,7 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
-            AZURE_CLIENT_OBJECT_ID=$(az ad sp show \
-              --id "$AZURE_CLIENT_ID" \
-              --query id \
-              --output tsv 2>/dev/null || true)
-          fi
-
-          if [ -z "$AZURE_CLIENT_OBJECT_ID" ]; then
-            echo "Unable to resolve the Azure client object ID. Add AZURE_CLIENT_OBJECT_ID if the pipeline identity cannot query Microsoft Graph." >&2
-            exit 1
-          fi
-
-          KEYVAULT_ID=$(az keyvault show \
-            --name "${{ steps.kv.outputs.name }}" \
-            --query id -o tsv)
-
-          if [ -z "$KEYVAULT_ID" ]; then
-            echo "Unable to resolve Key Vault resource ID" >&2
-            exit 1
-          fi
-
-          KEYVAULT_CONTRIBUTOR_ASSIGNMENTS=$(az role assignment list \
-            --assignee-object-id "$AZURE_CLIENT_OBJECT_ID" \
-            --scope "$KEYVAULT_ID" \
-            --role "Key Vault Contributor" \
-            --include-inherited \
-            --query "length(@)" -o tsv)
-
-          if [ "$KEYVAULT_CONTRIBUTOR_ASSIGNMENTS" -gt 0 ]; then
-            echo "GitHub Actions identity already has Key Vault Contributor access; skipping RBAC update."
-          else
-            echo "Key Vault Contributor access is missing; creating RBAC assignment."
-            az role assignment create \
-              --assignee-object-id "$AZURE_CLIENT_OBJECT_ID" \
-              --assignee-principal-type ServicePrincipal \
-              --role "Key Vault Contributor" \
-              --scope "$KEYVAULT_ID"
-          fi
-
-          # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
-          # Read the object ID straight off the AKS resource (ARM).
+          # Read the kubelet object ID straight off the AKS resource (ARM).
           KV_IDENTITY_OBJECT_ID=$(az aks show \
             --name "${{ steps.aks.outputs.name }}" \
             --resource-group "${{ steps.aks.outputs.resource_group }}" \
@@ -312,13 +270,11 @@ jobs:
             -o tsv)
 
           if [ "$KV_SECRET_PERMISSIONS" -gt 0 ]; then
-            echo "AKS kubelet identity already has Key Vault secret get/list access; skipping policy update."
+            echo "AKS kubelet identity has Key Vault secret get/list access."
           else
-            echo "Key Vault secret access is missing; applying access policy."
-            az keyvault set-policy \
-              --name "${{ steps.kv.outputs.name }}" \
-              --object-id "$KV_IDENTITY_OBJECT_ID" \
-              --secret-permissions get list
+            echo "Key Vault secret access is missing. Apply this command locally with an authorized Azure identity:" >&2
+            echo 'az keyvault set-policy --name "<KEYVAULT_NAME>" --object-id "<KUBELET_OBJECT_ID>" --secret-permissions get list' >&2
+            exit 1
           fi
 
       - name: Deploy chart
