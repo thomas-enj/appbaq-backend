@@ -1,122 +1,78 @@
-# azure-quiz-backend
+# AppBaq - Backend
 
-Spring Boot REST API for the Microsoft Azure certifications revision app (AZ-900 to start, other certifications
-like AZ-104 can be added later with no schema change — see "Data model" below).
+The core business logic, REST API endpoints, and relational data management for the Azure Quiz (AppBaq) project are handled by this repository.
 
+## 🌐 The AppBaq Ecosystem & Deployment Order
+The project is split across three interconnected repositories. A strict deployment sequence must be followed:
+1. **[Infrastructure](https://github.com/thomas-enj/appbaq-infra-terraform):** The Azure cloud resources must be provisioned first.
+2. **[Backend](https://github.com/thomas-enj/appbaq-backend):** The database schemas and API services must be deployed second (Current Repository).
+3. **[Frontend](https://github.com/thomas-enj/appbaq-frontend):** The user interface must be deployed last.
 
-## Stack
+## 🎯 Scope & Design Choices
 
-- Java 21, Spring Boot 3.5.x, Maven
-- Spring Web, Spring Data JPA, PostgreSQL, Flyway, Bean Validation, Lombok, Actuator
-- Spring Data Redis (cache — see "Running locally" below)
-- Spring Cloud Azure Storage Blob (quiz result export — see "Running locally" below)
-- springdoc-openapi (Swagger UI)
-- Tests: JUnit 5, Mockito, AssertJ
+The Java Spring Boot application and its `Dockerfile` were supplied as-is by the base repository and were not selected as part of this work (see the [legacy documentation](LEGACY_README.md)). The choices made here concern the way the image is published, deployed, and operated on Azure, and are aligned with those of the infrastructure repository:
 
-## Running locally
+| Axis | Choice |
+| --- | --- |
+| CI/CD tooling | GitHub Actions |
+| Deployment target | Azure Kubernetes Service (AKS), through a Helm chart |
+| Image registry | The project Azure Container Registry, resolved by tags |
+| Secret delivery | Azure Key Vault, mounted by the Secrets Store CSI driver |
+| Backing services | PostgreSQL Flexible Server, Azure Managed Redis, Azure Storage |
 
-Prerequisites: JDK 21, Docker (Desktop or Engine) running.
+## 🗺️ Architecture Diagram
 
-```bash
-./mvnw spring-boot:run    # starts the API on http://localhost:8080
-```
+> **Status: work in progress.**
 
-That's it — a plain `./mvnw spring-boot:run`, or hitting "Run" on `AzureQuizBackendApplication` in
-your IDE, is enough on its own. The `spring-boot-docker-compose` dependency (pom.xml) detects
-`docker-compose.yml` at the project root and automatically starts Postgres + Redis + Azurite (a
-local Azure Blob Storage emulator) for you before the app context loads, then stops them when the
-app stops — no manual `docker compose up -d` step. It's marked `optional`, so it never ships in the
-production jar deployed to Azure App Service; this convenience is dev-only.
+The application architecture diagram (draw.io) will be published here, covering the request flow from the frontend to the API and the calls issued towards the database, the cache, and the storage account.
 
-If you'd rather manage the containers yourself (e.g. keep them running across multiple app restarts
-instead of stopping them every time), that still works exactly as before:
+## 🏗️ Application Architecture
+*Note: The core application code and its original documentation were migrated from a separate, pre-existing repository.*
 
-```bash
-docker compose up -d      # starts Postgres + Redis + Azurite (see docker-compose.yml)
-./mvnw spring-boot:run
-```
+A robust Java API is built using the Spring Boot framework and managed via Maven (`pom.xml`). The internal architecture is organized into specialized packages:
+* **Controllers & Services:** API endpoints and business rules are defined to manage Certifications, Training Modules, and Quiz Sessions (`CertificationController`, `ModuleController`, `QuizSessionController`).
+* **Data Transfer & Entities:** Data is structured using specialized DTOs (`AnswerOptionDto`, `SubmitAnswerRequest`, etc.) and mapped to the database via JPA Entities (`QuizSession`, `Question`, `Certification`).
+* **Security & Configuration:** Access is secured by an API Key filter (`ApiKeyFilter.java`), and performance is optimized through dedicated caching configurations (`CacheConfig.java`).
 
-Flyway applies the migrations (`src/main/resources/db/migration`) on startup, including the real content for
-AZ-900 modules 1 to 6 (`V2` to `V7`, 45 questions per module: 30 standard questions + 15 scenario questions).
-The 30 standard questions per module come from the trainer's answer key; the 15 scenario questions have no
-written answer key (the trainer corrects them live) — their answers were determined from AZ-900 fundamentals
-and deserve a quick review before use in training. One inconsistency was found and fixed in the trainer's
-answer key: Module 1 Q8 marked "SaaS" as the answer while the explanation clearly describes PaaS — the
-objectively correct answer (PaaS) was imported.
+## 🗄️ Database Management
 
-Six official mock exams (`V9` to `V14`, AZ900_Test_A to F, 50 questions each with answers/explanations
-included in the same source document) are imported as modules of type `MOCK_EXAM` (`type` column on
-`module`, migration `V8`). They stay strictly independent from each other and from course modules: the
-random exam mode (`EXAM`) only draws from modules of type `CONTENT` (see
-`QuestionRepository.findRandomActiveByCertification`).
+Database initialization and schema updates are fully automated.
+* **Migrations:** SQL schemas and mock data are managed by Flyway through 15 sequential migration scripts located in `src/main/resources/db/migration/`, applied at application startup.
+* **Data Seeding:** The database is automatically seeded with Azure modules (e.g., Cloud Concepts, Azure Architecture, Azure Networking) and multiple mock exams. Translations to English are also enforced via these scripts.
 
-`docker-compose up -d` also starts a local Redis (no auth, plaintext) backing
-`CertificationService.getAllCertifications()` and `ModuleService.getModulesByCertification()`, both
-`@Cacheable` (see `CacheConfig` for why values are JSON-serialized rather than the JDK-serialization
-default). Entries expire after 30 minutes; there's no explicit eviction on writes, since the underlying
-data (certifications/modules) only ever changes via a new Flyway migration, not through the running app.
+## 📦 Containerization & Kubernetes Deployment
 
-Every call to `GET /api/quiz-sessions/{sessionId}/result` also exports that result as a JSON blob
-(`QuizResultExportService`), downloadable again through `GET /api/quiz-sessions/{sessionId}/result/export`
-— the simplest concrete use of the Storage Account provisioned for this TP. Locally this goes to Azurite;
-in prod, to the `java-uploads-<owner>` container (Terraform's `storage-java.tf`), authenticated via this
-Web App's managed identity, no account key involved either way (`shared_access_key_enabled = false` on
-the account). A Storage outage never breaks the quiz itself — the export failing is only logged, not
-thrown; Postgres stays the source of truth for results.
+The backend is built to run natively within a Kubernetes environment.
+* **Docker:** The image is produced by the inherited multi-stage `Dockerfile` (JDK 21 for the build, JRE 21 for the runtime), which already runs the application under a dedicated non-root user and therefore satisfies the restricted Pod Security Standards enforced on the cluster. A `docker-compose.yml` is also provided for local development.
+* **Helm Chart:** The Kubernetes resources — namespace, Deployment, ClusterIP Service, ConfigMap, NetworkPolicies, and `SecretProviderClass` — are orchestrated by the chart located in `helm/appbaq/`, and are deployed into the project namespace alongside the frontend.
+* **Runtime configuration:** Liveness and readiness probes are wired to `/actuator/health`, CPU and memory requests and limits are declared, and non-sensitive settings (active Spring profile, allowed CORS origins, storage container name) are supplied through the ConfigMap.
 
-Swagger UI: http://localhost:8080/swagger-ui.html
+## 🔐 Network & Secret Management
 
-## Tests
+* **Ingress isolation:** A `default-deny-ingress` NetworkPolicy is applied to the namespace, and a single companion policy allows traffic on port 8080 from the frontend pods only. The API is exposed through a ClusterIP Service and is therefore never reachable from outside the cluster.
+* **Application-level control:** Requests are additionally filtered by an API key (`ApiKeyFilter`), and CORS is restricted to the exact frontend origin.
+* **Secret injection:** Database, Redis, and Storage credentials are mounted by the Secrets Store CSI driver through a `SecretProviderClass`, using the AKS managed identity, and synchronized into a Kubernetes secret consumed as environment variables. No credential is stored in the chart, in the image, or in the repository.
 
-```bash
-./mvnw test
-```
+## 🚀 CI/CD Pipelines & Automation
 
-## Environment variables (production)
+Manual deployments are bypassed in favor of complete automation. Both workflows authenticate to Azure through OIDC federated credentials.
 
-The `default` profile (active locally) defines a localhost datasource in `application.yml`. In production,
-set these environment variables (e.g. Azure App Service) — they directly override the corresponding Spring
-properties, no extra profile needs activating:
+* **Build & release preparation (`backend-release-prep.yml`):** The application is built and tested with Maven, the image is built and pushed to the ACR, and a pull request bumping the image tag and the chart version is opened automatically.
+* **Deployment (`helm.yml`):** The chart is linted and rendered, then released to AKS with `helm upgrade --install`. Manual `deploy`, `destroy`, and `diagnose` actions are exposed through `workflow_dispatch`.
+* **Resource discovery:** The AKS cluster, the Container Registry, and the Key Vault are resolved at runtime by querying Azure on their tags (`owner`, `environment`, `cohort`, `scope`). No resource name is hard-coded in the pipelines.
 
-| Variable | Description |
-|---|---|
-| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL, e.g. `jdbc:postgresql://<host>:5432/azurequiz` |
-| `SPRING_DATASOURCE_USERNAME` | PostgreSQL user |
-| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password |
-| `APP_CORS_ALLOWED_ORIGINS` | Allowed origin(s), e.g. the frontend Static Web App URL |
-| `REDIS_HOSTNAME` | Redis host, e.g. Azure Managed Redis's hostname |
-| `REDIS_PORT` | Redis port. Defaults to `6379` (docker-compose) locally; Azure Managed Redis exposes a different port, see the infra repo's `redis.tf` |
-| `REDIS_PASSWORD` | Redis access key. Empty locally (docker-compose's Redis has no auth) |
-| `REDIS_SSL_ENABLED` | `true` in prod (Azure Managed Redis requires TLS), `false` locally |
-| `BACKEND_API_KEY` | Shared secret the frontend must send as `X-Api-Key` (see `ApiKeyFilter`). Left unset locally — the check is skipped. In prod it's injected from Key Vault (see `app-service-java.tf` / `keyvault.tf` in the infra repo). |
-| `STORAGE_ACCOUNT_NAME` | Storage Account name. Authenticated via this Web App's managed identity (no key) — see `SPRING_PROFILES_ACTIVE` below for why |
-| `STORAGE_CONTAINER_NAME` | Blob container for quiz result exports, e.g. `java-uploads-<owner>` |
-| `SPRING_PROFILES_ACTIVE` | Set to `prod` by Terraform. Deactivates the `default` profile's local-only settings (localhost datasource, Azurite connection string) — without it, Blob Storage would try to reach a local Azurite that doesn't exist in Azure |
+## 🛠️ Code Quality & Governance
 
-## Data model
+* **Dependency Management:** Dependencies are kept up-to-date automatically by Dependabot (`.github/dependabot.yml`).
+* **Code Ownership:** Review responsibilities are formally defined in `.github/CODEOWNERS`.
+* **Verified Commits:** Commits are signed so that the *Verified* badge is obtained, and an incremental, prefixed commit history is maintained.
+* **Automated Checks:** Application changes are gated by a Maven `clean package`, which compiles the project and runs the unit test suite, while chart changes are gated by `helm lint --strict` and a manifest render. Both checks run on pushes and on pull requests. Azure access relies on OIDC federated credentials, so no long-lived credential is stored in the repository.
+* **Security Scanning:** Secret detection is delegated to GitHub's native secret scanning, which is enabled on the repository and raises an alert as soon as a credential is pushed. Vulnerable dependencies are reported by Dependabot alerts, and private vulnerability reporting is enabled so that issues can be disclosed responsibly. Code scanning (SAST) has not been set up, and no container image scan is executed by the pipelines.
 
-`certification` (e.g. AZ-900, AZ-104...) → `module` → `question` → `answer_option`. A quiz session
-(`quiz_session`) is tied to a certification and, in review mode, to a specific module; in exam mode,
-questions are drawn randomly from all active modules of the chosen certification.
+## 📚 Inherited Application Documentation
 
-Adding a new certification requires no schema migration: just insert a row into `certification` and its
-associated modules/questions (a dedicated Flyway migration, generated from the supplied content).
+This README covers the Azure deployment of the service. The functional and technical documentation of the application itself — endpoints, domain model, local execution, and configuration properties — was written by the base repository and has been kept unchanged:
 
-## API contract
+👉 **[Read the inherited backend documentation](LEGACY_README.md)**
 
-- `GET /api/certifications` — list of available certifications
-- `GET /api/certifications/{certificationId}/modules` — modules of a certification, with active question count and `type` (`CONTENT` or `MOCK_EXAM`)
-- `POST /api/quiz-sessions` — creates a session
-  - `MODULE` mode: `{ "mode": "MODULE", "moduleId": "..." , "questionCount": 10 }` (`questionCount` optional, otherwise all active questions in the module)
-  - `EXAM` mode: `{ "mode": "EXAM", "certificationId": "...", "questionCount": 40 }` (`questionCount` optional, default 40)
-  - the response contains the questions and their options **without** indicating the correct answer
-- `POST /api/quiz-sessions/{sessionId}/questions/{questionId}/answer` — submits an answer, returns whether it's correct + the correct options + the explanation
-- `GET /api/quiz-sessions/{sessionId}/result` — final aggregated score for the session; also exports it as a JSON blob (see "Running locally")
-- `GET /api/quiz-sessions/{sessionId}/result/export` — downloads that exported blob (404 if `result` was never called for this session)
-
-
-## Out of scope for this repo
-
-- Provisioning Azure infrastructure (App Service, Static Web App, PostgreSQL Flexible Server)
-- Importing the real question content (supplied separately, converted into Flyway migrations).
-
+> The deployment details mentioned in that document (App Service, Static Web Apps, managed-identity access to Storage) describe an earlier target and have been superseded by the AKS setup described above.
