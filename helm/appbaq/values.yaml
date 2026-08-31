@@ -12,8 +12,8 @@ backend:
   enabled: true
   replicaCount: 1
   image:
-    repository: baqacrthomasenjalbertywgh.azurecr.io/appbaq-backend # backend image repository
-    tag: 6f511f76 # backend image tag
+    repository: baqacrthomasenjalbertuadp.azurecr.io/appbaq-backend # backend image repository
+    tag: e764e17a # backend image tag
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -27,7 +27,6 @@ backend:
   config:
     constants:
       springProfilesActive: aks
-      redisPort: "6380"
       redisSslEnabled: "true"
     infra:
       appCorsAllowedOrigins: # frontend url
@@ -50,6 +49,7 @@ backend:
           springDatasourcePassword: spring-datasource-password
           redisHostname: redis-hostname
           redisPassword: redis-password
+          redisSslPort: redis-ssl-port
           backendApiKey: backend-api-key
           storageAccountName: storage-account-name
           storageSasToken: storage-sas-token

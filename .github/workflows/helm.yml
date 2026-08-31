@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - helm/appbaq/**
+      - helm/**
       - .github/workflows/helm.yml
+  pull_request:
   workflow_dispatch:
     inputs:
       action:
@@ -28,14 +29,40 @@ env:
   NAMESPACE: appbaq-then
 
 jobs:
+  changes:
+    name: Detect Helm changes
+    runs-on: ubuntu-latest
+    outputs:
+      helm: ${{ steps.filter.outputs.helm || steps.manual.outputs.helm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Detect changed paths
+        id: filter
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            helm:
+              - 'helm/**'
+              - '.github/workflows/helm.yml'
+
+      - name: Enable Helm workflow for manual runs
+        id: manual
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: echo "helm=true" >> "$GITHUB_OUTPUT"
+
   lint-and-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.helm == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.15.4
 
@@ -108,7 +135,7 @@ jobs:
             --overwrite-existing
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.15.4
 
@@ -152,11 +179,35 @@ jobs:
 
       - name: Grant AKS pull access to ACR
         run: |
-          # Re-attach on every run: this is lost if the AKS or the ACR is destroyed/recreated.
-          az aks update \
+          ACR_ID=$(az acr show \
+            --name "${{ steps.acr.outputs.name }}" \
+            --query id -o tsv)
+          KUBELET_OBJECT_ID=$(az aks show \
             --name "${{ steps.aks.outputs.name }}" \
             --resource-group "${{ steps.aks.outputs.resource_group }}" \
-            --attach-acr "${{ steps.acr.outputs.name }}"
+            --query "identityProfile.kubeletidentity.objectId" -o tsv)
+
+          if [ -z "$ACR_ID" ] || [ -z "$KUBELET_OBJECT_ID" ]; then
+            echo "Unable to resolve ACR ID or AKS kubelet identity object ID" >&2
+            exit 1
+          fi
+
+          ACR_PULL_ASSIGNMENTS=$(az role assignment list \
+            --assignee-object-id "$KUBELET_OBJECT_ID" \
+            --scope "$ACR_ID" \
+            --role AcrPull \
+            --include-inherited \
+            --query "length(@)" -o tsv)
+
+          if [ "$ACR_PULL_ASSIGNMENTS" -gt 0 ]; then
+            echo "AKS already has AcrPull access to ACR; skipping attach."
+          else
+            echo "AcrPull access is missing; attaching ACR to AKS."
+            az aks update \
+              --name "${{ steps.aks.outputs.name }}" \
+              --resource-group "${{ steps.aks.outputs.resource_group }}" \
+              --attach-acr "${{ steps.acr.outputs.name }}"
+          fi
 
       - name: Resolve Key Vault name (query)
         id: kv
@@ -193,7 +244,7 @@ jobs:
 
           echo "name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Grant Key Vault access to node managed identity
+      - name: Verify Key Vault access for node managed identity
         env:
           KEYVAULT_CLIENT_ID: ${{ secrets.KEYVAULT_CLIENT_ID }}
         run: |
@@ -202,9 +253,7 @@ jobs:
             exit 1
           fi
 
-          # Re-grant on every run: the AKS node identity's object ID changes if the cluster is destroyed/recreated.
-          # Read objectId straight off the AKS resource (ARM) instead of az ad sp show (Microsoft Graph),
-          # since the pipeline identity only has ARM RBAC, not Graph permissions.
+          # Read the kubelet object ID straight off the AKS resource (ARM).
           KV_IDENTITY_OBJECT_ID=$(az aks show \
             --name "${{ steps.aks.outputs.name }}" \
             --resource-group "${{ steps.aks.outputs.resource_group }}" \
@@ -215,10 +264,18 @@ jobs:
             exit 1
           fi
 
-          az keyvault set-policy \
+          KV_SECRET_PERMISSIONS=$(az keyvault show \
             --name "${{ steps.kv.outputs.name }}" \
-            --object-id "$KV_IDENTITY_OBJECT_ID" \
-            --secret-permissions get list
+            --query "length(properties.accessPolicies[?objectId=='$KV_IDENTITY_OBJECT_ID' && contains(permissions.secrets, 'get') && contains(permissions.secrets, 'list')])" \
+            -o tsv)
+
+          if [ "$KV_SECRET_PERMISSIONS" -gt 0 ]; then
+            echo "AKS kubelet identity has Key Vault secret get/list access."
+          else
+            echo "Key Vault secret access is missing. Apply this command locally with an authorized Azure identity:" >&2
+            echo 'az keyvault set-policy --name "<KEYVAULT_NAME>" --object-id "<KUBELET_OBJECT_ID>" --secret-permissions get list' >&2
+            exit 1
+          fi
 
       - name: Deploy chart
         env:
@@ -344,7 +401,7 @@ jobs:
             --overwrite-existing
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.15.4
 
@@ -412,10 +469,35 @@ jobs:
           kubectl get svc -n "${{ env.NAMESPACE }}" -o wide
           kubectl get endpoints -n "${{ env.NAMESPACE }}" -o wide
 
+          echo "=== Redis config actually injected (hostname/port only, no credentials) ==="
+          kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_HOSTNAME}' | base64 -d ; echo
+          kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_PORT}' | base64 -d ; echo
+          kubectl get configmap appbaq-backend-config -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_SSL_ENABLED}' ; echo
+
+          echo "=== Redis TCP reachability test from inside the cluster ==="
+          REDIS_HOST=$(kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_HOSTNAME}' | base64 -d)
+          REDIS_PORT_VALUE=$(kubectl get secret appbaq-backend-secret -n "${{ env.NAMESPACE }}" -o jsonpath='{.data.REDIS_PORT}' | base64 -d)
+          kubectl run redis-connectivity-test --rm -i --restart=Never --image=busybox:1.36 \
+            -n "${{ env.NAMESPACE }}" --command --quiet -- \
+            sh -c "nc -zvw5 $REDIS_HOST $REDIS_PORT_VALUE" || true
+
+          echo "=== Redis TLS + AUTH test from inside the cluster (password never echoed) ==="
+          kubectl run redis-auth-test --rm -i --restart=Never --image=redis:7-alpine \
+            -n "${{ env.NAMESPACE }}" \
+            --overrides='{"spec":{"containers":[{"name":"redis-auth-test","image":"redis:7-alpine","command":["sh","-c","redis-cli -h $REDIS_HOSTNAME -p $REDIS_PORT --tls -a \"$REDIS_PASSWORD\" --no-auth-warning PING"],"envFrom":[{"secretRef":{"name":"appbaq-backend-secret"}}]}]}}' \
+            || true
+
           BACKEND_POD=$(kubectl get pod -n "${{ env.NAMESPACE }}" -l app.kubernetes.io/name=appbaq-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -n "$BACKEND_POD" ]; then
             echo "=== Describe backend pod ==="
             kubectl describe pod "$BACKEND_POD" -n "${{ env.NAMESPACE }}"
+
+            echo "=== Triggering /api/certifications from inside the cluster (API key never echoed) ==="
+            kubectl run api-request-test --rm -i --restart=Never --image=curlimages/curl:8.10.1 \
+              -n "${{ env.NAMESPACE }}" \
+              --labels='app.kubernetes.io/name=appbaq-frontend,app.kubernetes.io/component=frontend' \
+              --overrides='{"metadata":{"labels":{"app.kubernetes.io/name":"appbaq-frontend","app.kubernetes.io/component":"frontend"}},"spec":{"containers":[{"name":"api-request-test","image":"curlimages/curl:8.10.1","command":["sh","-c","curl -sS -m 65 -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\\n\" -H \"X-Api-Key: $BACKEND_API_KEY\" http://appbaq-backend:8080/api/certifications"],"envFrom":[{"secretRef":{"name":"appbaq-backend-secret"}}]}]}}' \
+              || true
 
             # Redact credentials/tokens that could leak into application logs (URLs, Authorization headers, connection strings).
             REDACT='s#://[^/@[:space:]]+:[^/@[:space:]]+@#://***:***@#g; s/([Pp]assword)[=:][^&[:space:]"'"'"']+/\1=***/g; s/(Authorization:[[:space:]]*Bearer)[[:space:]]+[^[:space:]]+/\1 ***/g; s/(AccountKey=)[^;[:space:]]+/\1***/g'
