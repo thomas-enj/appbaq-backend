@@ -1,0 +1,75 @@
+name: DAST - OWASP ZAP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  zap-scan:
+    name: OWASP ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build Application JAR
+        run: ./mvnw clean package -DskipTests
+
+      - name: Start Spring Boot Application in Background
+        run: |
+          nohup java -Dspring.profiles.active=dast -jar target/*.jar > app-dast.log 2>&1 &
+          
+          echo "Waiting for Spring Boot API to become ready..."
+          READY=0
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "Spring Boot is UP and ready on port 8080."
+              READY=1
+              break
+            elif curl -s http://localhost:8080 > /dev/null 2>&1; then
+              echo "Spring Boot port 8080 responded."
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+          
+          if [ $READY -ne 1 ]; then
+            echo "❌ Application failed to start within timeout. Application logs:"
+            cat app-dast.log
+            exit 1
+          fi
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: 'http://localhost:8080'
+          fail_action: false # Non bloquant, informatif
+          issue_title: 'DAST Security Scan Alert'
+
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          echo "## 🌐 DAST Scan Summary (OWASP ZAP)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Paramètre | Valeur |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Cible scannée** | \`http://localhost:8080\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Type de scan** | Baseline (Passif) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Statut bloquant** | Non (Informatif) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> OWASP ZAP a analysé l'API en cours d'exécution. Consultez les alertes générées dans les artefacts ou issues associées." >> "$GITHUB_STEP_SUMMARY"
