@@ -17,6 +17,7 @@
 
 	<properties>
 		<java.version>21</java.version>
+		<tomcat.version>11.0.25</tomcat.version>
 		<springdoc-openapi.version>3.1.1</springdoc-openapi.version>
 		<!-- AZURE -->
 		<spring-cloud-azure-dependencies.version>7.4.0</spring-cloud-azure-dependencies.version>
