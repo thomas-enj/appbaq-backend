@@ -16,12 +16,16 @@ spring:
         enabled: false
   cache:
     type: none
-
-azure:
-  storage:
-    account-name: mockstorage
-    sas-token: mocktoken
-    container-name: mockcontainer
+  cloud:
+    azure:
+      storage:
+        blob:
+          # endpoint + sas-token (not account-name) so no real Azure credential chain
+          # (managed identity / DefaultAzureCredential) is attempted during CI startup.
+          endpoint: https://mockstorage.blob.core.windows.net
+          sas-token: mocktoken
 
 app:
+  storage:
+    container-name: mockcontainer
   api-key: "dast-ci-test-key"
