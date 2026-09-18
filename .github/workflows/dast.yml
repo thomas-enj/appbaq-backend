@@ -68,17 +68,61 @@ jobs:
           target: 'http://localhost:8080'
           fail_action: false # Non bloquant, informatif
           issue_title: 'DAST Security Scan Alert'
-          allow_issue_writing: false # Issues are disabled on this repo -- would otherwise hard-fail the job
+          allow_issue_writing: false # Informative only, do not create issues
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zap-scan-reports
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          if-no-files-found: warn
 
       - name: Generate Job Summary
         if: always()
         run: |
-          echo "## 🌐 DAST Scan Summary (OWASP ZAP)" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Paramètre | Valeur |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Cible scannée** | \`http://localhost:8080\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Type de scan** | Baseline (Passif) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Statut bloquant** | Non (Informatif) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "> OWASP ZAP a analysé l'API en cours d'exécution. Consultez les alertes générées dans les artefacts ou issues associées." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## 🌐 DAST Scan Summary (OWASP ZAP)"
+            echo ""
+            echo "| Paramètre | Valeur |"
+            echo "|---|---|"
+            echo "| **Cible scannée** | \`http://localhost:8080\` |"
+            echo "| **Type de scan** | Baseline (Passif) |"
+            echo "| **Statut bloquant** | Non (Informatif) |"
+
+            if [ -f report_json.json ]; then
+              HIGH=$(jq '[.site[].alerts[]? | select(.riskcode=="3")] | length' report_json.json)
+              MEDIUM=$(jq '[.site[].alerts[]? | select(.riskcode=="2")] | length' report_json.json)
+              LOW=$(jq '[.site[].alerts[]? | select(.riskcode=="1")] | length' report_json.json)
+              INFO=$(jq '[.site[].alerts[]? | select(.riskcode=="0")] | length' report_json.json)
+              echo "| **Alertes High** | $HIGH |"
+              echo "| **Alertes Medium** | $MEDIUM |"
+              echo "| **Alertes Low** | $LOW |"
+              echo "| **Alertes Informational** | $INFO |"
+            else
+              echo "| **Alertes** | ⚠️ report_json.json introuvable (le scan a probablement échoué avant de générer un rapport) |"
+            fi
+
+            echo ""
+            echo "> 📄 Rapports complets (HTML/JSON/Markdown) disponibles dans l'artefact \`zap-scan-reports\` de ce run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f report_json.json ]; then
+            {
+              echo ""
+              echo "<details><summary>Détail des alertes non passives (Medium/High)</summary>"
+              echo ""
+              echo "| Risque | Règle | Nb occurrences | URLs (exemples) |"
+              echo "|---|---|---|---|"
+            } >> "$GITHUB_STEP_SUMMARY"
+            jq -r '
+              [.site[].alerts[]? | select(.riskcode=="2" or .riskcode=="3")]
+              | .[]
+              | "| " + .riskdesc + " | " + .alert + " | " + (.count // (.instances | length | tostring)) + " | " + ([.instances[]?.uri] | .[0:2] | join("<br>")) + " |"
+            ' report_json.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "| - | Aucune alerte Medium/High | - | - |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
