@@ -16,11 +16,6 @@ spec:
       labels:
 {{ include "appbaq.backendLabels" . | nindent 8 }}
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-{{- if .Values.backend.secret.keyVault.enabled }}
       volumes:
 {{- if .Values.backend.secret.keyVault.enabled }}
         - name: secrets-store-inline
@@ -34,6 +29,8 @@ spec:
           emptyDir: {}
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
