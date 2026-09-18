@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:dastdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driverClassName: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false # Avoid replaying PostgreSQL migrations that might be incompatible with H2
+  data:
+    redis:
+      repositories:
+        enabled: false
+  cache:
+    type: none
+  cloud:
+    azure:
+      storage:
+        blob:
+          # StorageConfig eagerly calls createIfNotExists() at startup, a real network call --
+          # points at the Azurite service container the DAST workflow spins up (same well-known
+          # devstoreaccount1 credentials as the "default"/local-dev profile in application.yml).
+          connection-string: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+
+app:
+  storage:
+    container-name: mockcontainer
+  api-key: "dast-ci-test-key"

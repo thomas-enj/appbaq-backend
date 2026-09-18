@@ -80,6 +80,15 @@
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- Runtime (not test) scope: the DAST workflow (.github/workflows/dast.yml)
+		     runs the repackaged jar directly with -Dspring.profiles.active=dast, which
+		     needs org.h2.Driver on the classpath; test-scoped deps aren't bundled into
+		     the executable jar by spring-boot:repackage. -->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>runtime</scope>
+		</dependency>
 
 		<!-- ===================== Lombok ===================== -->
 		<dependency>
