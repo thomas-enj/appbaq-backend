@@ -66,7 +66,7 @@ jobs:
         uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
         with:
           target: 'http://localhost:8080'
-          fail_action: false # Non bloquant, informatif
+          fail_action: false # Non-blocking, informative only
           issue_title: 'DAST Security Scan Alert'
           allow_issue_writing: false # Informative only, do not create issues
 
@@ -76,39 +76,39 @@ jobs:
           {
             echo "## 🌐 DAST Scan Summary (OWASP ZAP)"
             echo ""
-            echo "| Paramètre | Valeur |"
+            echo "| Parameter | Value |"
             echo "|---|---|"
-            echo "| **Cible scannée** | \`http://localhost:8080\` |"
-            echo "| **Type de scan** | Baseline (Passif) |"
-            echo "| **Statut bloquant** | Non (Informatif) |"
+            echo "| **Target scanned** | \`http://localhost:8080\` |"
+            echo "| **Scan type** | Baseline (Passive) |"
+            echo "| **Blocking status** | No (informative only) |"
 
             if [ -f report_json.json ]; then
               HIGH=$(jq '[.site[].alerts[]? | select(.riskcode=="3")] | length' report_json.json)
               MEDIUM=$(jq '[.site[].alerts[]? | select(.riskcode=="2")] | length' report_json.json)
               LOW=$(jq '[.site[].alerts[]? | select(.riskcode=="1")] | length' report_json.json)
               INFO=$(jq '[.site[].alerts[]? | select(.riskcode=="0")] | length' report_json.json)
-              echo "| **Alertes High** | $HIGH |"
-              echo "| **Alertes Medium** | $MEDIUM |"
-              echo "| **Alertes Low** | $LOW |"
-              echo "| **Alertes Informational** | $INFO |"
+              echo "| **High alerts** | $HIGH |"
+              echo "| **Medium alerts** | $MEDIUM |"
+              echo "| **Low alerts** | $LOW |"
+              echo "| **Informational alerts** | $INFO |"
             else
-              echo "| **Alertes** | ⚠️ report_json.json introuvable (le scan a probablement échoué avant de générer un rapport) |"
+              echo "| **Alerts** | ⚠️ report_json.json not found (the scan likely failed before generating a report) |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ -f report_json.json ]; then
             {
               echo ""
-              echo "<details><summary>Détail des alertes non passives (Medium/High)</summary>"
+              echo "<details><summary>Non-passive alert details (Medium/High)</summary>"
               echo ""
-              echo "| Risque | Règle | Nb occurrences | URLs (exemples) |"
+              echo "| Risk | Rule | Occurrence count | Example URLs |"
               echo "|---|---|---|---|"
             } >> "$GITHUB_STEP_SUMMARY"
             jq -r '
               [.site[].alerts[]? | select(.riskcode=="2" or .riskcode=="3")]
               | .[]
               | "| " + .riskdesc + " | " + .alert + " | " + (.count // (.instances | length | tostring)) + " | " + ([.instances[]?.uri] | .[0:2] | join("<br>")) + " |"
-            ' report_json.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "| - | Aucune alerte Medium/High | - | - |" >> "$GITHUB_STEP_SUMMARY"
+            ' report_json.json >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "| - | No Medium/High alert | - | - |" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "</details>" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -116,7 +116,7 @@ jobs:
           if [ -f report_md.md ]; then
             {
               echo ""
-              echo "<details><summary>Rapport ZAP complet (toutes les règles testées)</summary>"
+              echo "<details><summary>Full ZAP report (all rules tested)</summary>"
               echo ""
               cat report_md.md
               echo ""
