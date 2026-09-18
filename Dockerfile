@@ -31,9 +31,11 @@ WORKDIR /app
 
 # Runs as non-root -- AKS's default Pod Security Standards (baseline/restricted,
 # commonly enforced via namespace labels) reject containers that try to run as
-# UID 0.
-RUN useradd --system --create-home --shell /usr/sbin/nologin spring
-USER spring
+# UID 0. Fixed numeric UID/GID (not just a named user) so kubelet's
+# runAsNonRoot check can verify it without needing to read /etc/passwd.
+RUN groupadd --system --gid 1000 spring \
+    && useradd --system --uid 1000 --gid spring --create-home --shell /usr/sbin/nologin spring
+USER 1000:1000
 
 COPY --from=build /app/target/azure-quiz-backend-*.jar app.jar
 
