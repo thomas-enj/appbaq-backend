@@ -20,10 +20,10 @@ spring:
     azure:
       storage:
         blob:
-          # endpoint + sas-token (not account-name) so no real Azure credential chain
-          # (managed identity / DefaultAzureCredential) is attempted during CI startup.
-          endpoint: https://mockstorage.blob.core.windows.net
-          sas-token: mocktoken
+          # StorageConfig eagerly calls createIfNotExists() at startup, a real network call --
+          # points at the Azurite service container the DAST workflow spins up (same well-known
+          # devstoreaccount1 credentials as the "default"/local-dev profile in application.yml).
+          connection-string: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
 
 app:
   storage:
