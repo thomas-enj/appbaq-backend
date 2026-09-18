@@ -68,6 +68,7 @@ jobs:
           target: 'http://localhost:8080'
           fail_action: false # Non bloquant, informatif
           issue_title: 'DAST Security Scan Alert'
+          allow_issue_writing: false # Issues are disabled on this repo -- would otherwise hard-fail the job
 
       - name: Generate Job Summary
         if: always()
