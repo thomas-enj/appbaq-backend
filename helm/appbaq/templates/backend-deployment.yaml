@@ -22,6 +22,7 @@ spec:
         runAsGroup: 1000
 {{- if .Values.backend.secret.keyVault.enabled }}
       volumes:
+{{- if .Values.backend.secret.keyVault.enabled }}
         - name: secrets-store-inline
           csi:
             driver: secrets-store.csi.k8s.io
@@ -29,15 +30,29 @@ spec:
             volumeAttributes:
               secretProviderClass: {{ .Values.backend.secret.keyVault.secretProviderClass.name | quote }}
 {{- end }}
+        - name: tmp
+          emptyDir: {}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
               name: http
-{{- if .Values.backend.secret.keyVault.enabled }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+{{- if .Values.backend.secret.keyVault.enabled }}
             - name: secrets-store-inline
               mountPath: /mnt/secrets-store
               readOnly: true
