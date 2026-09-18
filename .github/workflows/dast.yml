@@ -70,17 +70,6 @@ jobs:
           issue_title: 'DAST Security Scan Alert'
           allow_issue_writing: false # Informative only, do not create issues
 
-      - name: Upload ZAP reports
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zap-scan-reports
-          path: |
-            report_html.html
-            report_json.json
-            report_md.md
-          if-no-files-found: warn
-
       - name: Generate Job Summary
         if: always()
         run: |
@@ -105,9 +94,6 @@ jobs:
             else
               echo "| **Alertes** | ⚠️ report_json.json introuvable (le scan a probablement échoué avant de générer un rapport) |"
             fi
-
-            echo ""
-            echo "> 📄 Rapports complets (HTML/JSON/Markdown) disponibles dans l'artefact \`zap-scan-reports\` de ce run."
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ -f report_json.json ]; then
@@ -126,3 +112,15 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "</details>" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+          if [ -f report_md.md ]; then
+            {
+              echo ""
+              echo "<details><summary>Rapport ZAP complet (toutes les règles testées)</summary>"
+              echo ""
+              cat report_md.md
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
