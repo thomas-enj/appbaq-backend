@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0 # Full history required for git blame and PR differential analysis
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -31,7 +31,7 @@ jobs:
         run: chmod +x mvnw
 
       - name: Cache SonarCloud packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
